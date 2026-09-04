@@ -1,0 +1,33 @@
+#separator:tab
+#html:false
+#tags column:3
+What problem does RAG solve that a plain LLM can't?	The LLM's knowledge is frozen at training time and it hallucinates on private/unseen data. RAG retrieves relevant documents at query time and puts them in the prompt, so answers are grounded in real, current, private data.	ai
+What are the 4 main steps of a RAG pipeline?	1) Chunk documents 2) Embed chunks into vectors 3) At query time, embed the query and retrieve nearest chunks (vector search) 4) Put retrieved chunks in the prompt and generate the answer.	ai
+Why do we chunk documents with overlap in RAG?	So a sentence or idea that sits on a chunk boundary is not cut in half — overlap keeps enough context in at least one chunk for retrieval to find it.	ai
+What is an embedding?	A vector of numbers representing the meaning of text, so that texts with similar meaning are close together in vector space — which lets us search by meaning instead of keywords.	ai
+When would you NOT use RAG?	When the task needs reasoning over the whole corpus at once (summarize everything), when data fits in the context window anyway, or when fine-tuning style/format matters more than facts.	ai
+What is function calling (tool use) in LLMs?	The model doesn't run code — it outputs a structured JSON saying "call this function with these arguments." Your code executes it and returns the result to the model, which uses it in the next turn.	ai
+What is the difference between temperature 0 and temperature 1?	Temperature 0 = almost deterministic, picks most likely token (good for extraction, code). Higher temperature = more random sampling (good for creative variety).	ai
+Why use a vector database instead of a plain array of embeddings?	Approximate nearest-neighbor indexes (like HNSW) make similarity search fast at scale — millions of vectors in milliseconds — plus filtering, persistence, and updates.	ai
+What is Pydantic used for in FastAPI?	Defining request/response models as Python classes — it validates incoming data automatically, returns clear 422 errors, and generates the OpenAPI docs.	backend
+Why is FastAPI fast despite being Python?	It's async (built on Starlette/uvicorn) — while one request waits on IO (DB, API call), the event loop serves others. The bottleneck for API servers is IO, not CPU.	backend
+What's the difference between authentication and authorization?	Authentication = proving who you are (login, JWT). Authorization = what you're allowed to do (roles, permissions). Auth-N is identity, Auth-Z is access.	backend
+What does Docker actually solve?	"Works on my machine" — it packages the app with its exact dependencies and OS libraries into an image that runs identically anywhere.	devops
+What is the time complexity of hash map lookup, and the catch?	O(1) average. The catch: worst case O(n) with many collisions, and hashing has constant overhead — for tiny n, an array can be faster.	dsa
+When do you reach for the two-pointer technique?	Sorted array (or linked list) where you need a pair/range meeting a condition — move left/right pointers inward based on comparison. Turns O(n²) pair-checking into O(n).	dsa
+When do you reach for sliding window?	Contiguous subarray/substring problems — longest/shortest window satisfying a condition. Grow the right edge, shrink the left when the condition breaks. O(n).	dsa
+What structure gives you O(1) min or max retrieval with O(log n) insert?	A heap (priority queue). Min-heap: smallest on top. Used for "top K", scheduling, merging K sorted lists.	dsa
+Binary search: what must be true to use it, and what's the classic bug?	The search space must be monotonic (sorted, or a yes/no condition that flips once). Classic bug: infinite loop from wrong mid/boundary update — use lo + (hi-lo)/2 and check loop invariants.	dsa
+BFS vs DFS — when do you pick each?	BFS (queue): shortest path in unweighted graphs, level-by-level. DFS (stack/recursion): explore full paths — cycle detection, topological sort, backtracking.	dsa
+What is dynamic programming in one sentence?	Recursion where subproblems repeat — so you cache (memoize) each subproblem's answer and compute it only once.	dsa
+What is a hash map + why is it the #1 interview tool?	Key→value store with O(1) average lookup. It trades memory for speed: "have I seen this before?", counting, grouping, two-sum complements.	dsa
+Stack: what problem pattern screams "use a stack"?	Nested or last-in-first-out structure: matching brackets, undo, DFS, and "next greater element" (monotonic stack).	dsa
+What's the difference between a process and a thread?	A process has its own memory space; threads share the memory of their process. Threads are cheaper to create/switch but need synchronization to avoid race conditions.	cs
+PREP — the structure for answering any opinion/explanation question?	Point (answer in one sentence first) → Reason (why) → Example (from my work) → Point (restate). If I drift mid-answer, return to the Point.	interview
+STAR — the structure for "tell me about a time..." questions?	Situation (context, 1-2 sentences) → Task (my responsibility) → Action (what I did, most detail here) → Result (outcome, with a number if possible).	interview
+The 5-step template for explaining any technical concept?	1) What problem does it solve 2) Core idea in one sentence 3) How it works step by step 4) Trade-offs / when not to use 5) Concrete example from my own work.	interview
+First sentence of my "tell me about yourself"?	"I'm a software engineer with 9 years of experience — I came up through mobile development, and for the last three years I've been building AI features: RAG pipelines, LLM chat assistants, and the FastAPI backends behind them."	interview
+My one-sentence EzyGlobal pitch?	"A UAE business-licensing platform where non-technical operators ask questions in plain language — RAG over licensing regulations with a self-hosted Llama model, plus voice assistant and automated document forensics."	interview
+English filler upgrade: instead of "aaa..." when I need thinking time, say?	"That's a good question — let me think about the best example." (Buys 3 seconds, sounds professional, no silence panic.)	english
+English: how to recover when I lose my thread mid-sentence?	Stop, smile, say: "Let me back up — my main point is..." and restate the Point (PREP). Recovering cleanly impresses more than never slipping.	english
+English: instead of "I did many projects", say?	"I've shipped [number] apps — the one most relevant here is..." Specific numbers + one deep example beats vague plurals every time.	english
