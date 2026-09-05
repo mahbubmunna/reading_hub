@@ -1,0 +1,106 @@
+# vLLM for the 30 day agent course.
+# Lives in its own compose project so it never destabilises the voice-rag stack.
+# Shares the host Hugging Face cache, so any model either project already
+# downloaded is reused rather than pulled again.
+#
+#   cd ~/agent-course/infra
+#   docker compose -f docker-compose.course.yml up -d
+#   docker compose -f docker-compose.course.yml logs -f
+#
+# Port 8000 on the host. The voice-rag stack uses 8080, so both can be defined
+# at once; see the VRAM note at the bottom before running both at the same time.
+
+services:
+  vllm-course:
+    image: vllm/vllm-openai:latest
+    container_name: vllm-course
+    ports:
+      - "8000:8000"
+    environment:
+      - HF_TOKEN=${HF_TOKEN}                 # only needed for gated repos like Llama
+      - VLLM_API_KEY=${VLLM_API_KEY:-local-dev-key}
+    volumes:
+      - ~/.cache/huggingface:/root/.cache/huggingface
+    command: >
+      --model Qwen/Qwen2.5-7B-Instruct-AWQ
+      --served-model-name local
+      --quantization awq
+      --max-model-len 32768
+      --gpu-memory-utilization 0.90
+      --enable-prefix-caching
+      --enable-auto-tool-choice
+      --tool-call-parser hermes
+      --kv-cache-dtype fp8
+      --host 0.0.0.0
+      --port 8000
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    ipc: host                                 # vLLM needs host shared memory
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request;urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 20
+      start_period: 300s                      # first start downloads weights
+
+# ---------------------------------------------------------------------------
+# The four flags that matter, and why
+#
+#   --enable-auto-tool-choice + --tool-call-parser
+#       Without BOTH, the OpenAI-compatible endpoint never emits `tool_calls`.
+#       The model describes the tool call in prose instead, your agent loop
+#       sees nothing, and it looks exactly like your day 4 loop is broken.
+#       Parser by model family:
+#         Qwen2.5 / Qwen3      -> hermes
+#         Llama 3.1 / 3.3      -> llama3_json
+#         Mistral              -> mistral
+#       Verify with the curl in 02-setup.md step A4 before writing any loop code.
+#
+#   --enable-prefix-caching
+#       On by default in current vLLM, passed explicitly so day 2 is unambiguous.
+#       Day 2 reads the hit rate off /metrics and then breaks it on purpose.
+#
+#   --max-model-len 32768
+#       Week 2 grows agent history past 8k. vLLM REJECTS over-long requests
+#       rather than truncating, so a small value shows up as errors mid-eval.
+#
+#   --served-model-name local
+#       Your code always says model="local". Swapping models on day 13 is a
+#       one line change here plus a restart, and zero changes in Python.
+#
+# If your model emits reasoning tags (Qwen3, DeepSeek-R1 distills), also add:
+#       --reasoning-parser qwen3
+#   or the <think> blocks land in message.content and pollute every agent turn,
+#   every summary, and every eval score.
+#
+# ---------------------------------------------------------------------------
+# VRAM on a 16 GB card
+#
+# Running the course stack ALONE (recommended): keep 0.90 above. Qwen2.5-7B-AWQ
+# weights are about 5.5 GB, leaving roughly 9 GB of KV cache, which is plenty
+# for a 32k context.
+#
+# Running BOTH stacks at once: 0.90 will fail to allocate. Drop this service to
+# 0.35 and --max-model-len 8192, and drop the voice-rag vllm to 0.35 as well.
+# Both will work, both will be slower, and the course evals will be cramped.
+# Simpler is to stop one stack while working on the other:
+#
+#   docker compose -f ~/voice-rag/docker-compose.yml stop vllm
+#   docker compose -f docker-compose.course.yml up -d
+#
+# ---------------------------------------------------------------------------
+# Model swaps for day 13's capability table: change --model and --quantization,
+# then `docker compose -f docker-compose.course.yml up -d --force-recreate`.
+#
+#   Weak tier    Qwen/Qwen2.5-3B-Instruct              (no --quantization flag)
+#   Daily tier   Qwen/Qwen2.5-7B-Instruct-AWQ          awq
+#   Coding, wk1  Qwen/Qwen2.5-Coder-7B-Instruct-AWQ    awq
+#   Already on   hugging-quants/Meta-Llama-3.1-8B-Instruct-AWQ-INT4
+#     disk         awq, and switch the parser to llama3_json

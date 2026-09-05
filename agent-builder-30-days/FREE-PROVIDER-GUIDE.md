@@ -36,43 +36,60 @@ vLLM preallocates VRAM, so unlike Ollama you must size the model and the context
 
 | Model | Weights | Good for | Context to ask for |
 |---|---|---|---|
-| `Qwen/Qwen3-8B` AWQ or GPTQ 4-bit | about 6 GB | Your daily driver. Fast, solid tool calling | 32k |
-| `Qwen/Qwen2.5-14B-Instruct-AWQ` | about 9 GB | When you want more reasoning | 16k |
-| `Qwen/Qwen2.5-Coder-14B-Instruct-AWQ` | about 9 GB | Week 1 coding agent | 16k |
-| `openai/gpt-oss-20b` | about 13 GB | Strongest local option, tight fit | 8k to 12k |
+| `Qwen/Qwen2.5-7B-Instruct-AWQ` | about 5.5 GB | Your daily driver. Known-good tool calling with `hermes` | 32k |
+| `Qwen/Qwen2.5-Coder-7B-Instruct-AWQ` | about 5.5 GB | Week 1 coding agent | 32k |
+| `Qwen/Qwen2.5-14B-Instruct-AWQ` | about 9 GB | More reasoning, if day 6 shows the 7B is the limit | 16k |
 | `Qwen/Qwen2.5-3B-Instruct` | about 2 GB | The deliberately weak one for day 13 | 8k |
+| `hugging-quants/Meta-Llama-3.1-8B-Instruct-AWQ-INT4` | already on disk | Zero download. Use `llama3_json` parser | 16k |
 
-Start with Qwen3-8B. Move up only if day 6 shows the model is the limit.
+Start with Qwen2.5-7B-Instruct-AWQ. If you want to prove the pipeline before downloading anything, start with the Llama you already have cached from voice-rag, switch the parser to `llama3_json`, and confirm the day 3 curl returns `tool_calls`. Then download Qwen and switch.
 
-### The launch command, with the flags that matter
+Repo ids on Hugging Face move. If one 404s, search the model name plus AWQ and take a current quant; the parser depends on the model family, not on who quantised it.
 
-```bash
-vllm serve Qwen/Qwen3-8B-AWQ \
-  --served-model-name local \
-  --max-model-len 32768 \
-  --gpu-memory-utilization 0.90 \
-  --enable-prefix-caching \
-  --enable-auto-tool-choice \
-  --tool-call-parser hermes \
-  --reasoning-parser qwen3 \
-  --kv-cache-dtype fp8 \
-  --host 0.0.0.0 --port 8000 \
-  --api-key local-dev-key
+### Run it in Docker, alongside your existing stack
+
+You already have vLLM in Docker for the voice-rag project, and that compose mounts `~/.cache/huggingface` into the container. That mount is doing the work: weights land in your host cache and are shared between projects. **Do not install vLLM or `huggingface_hub` natively.** There is nothing to gain and two toolchains to keep in sync.
+
+Use `infra/docker-compose.course.yml` from this course folder. It is a second service, on host port 8000, with the flags the course needs. Your voice-rag file stays untouched.
+
+The command it runs:
+
+```
+--model Qwen/Qwen2.5-7B-Instruct-AWQ
+--served-model-name local
+--quantization awq
+--max-model-len 32768
+--gpu-memory-utilization 0.90
+--enable-prefix-caching
+--enable-auto-tool-choice
+--tool-call-parser hermes
+--kv-cache-dtype fp8
 ```
 
-Four of those flags decide whether this course works at all.
+Four of those decide whether the course works at all.
 
-**`--enable-auto-tool-choice --tool-call-parser hermes`.** Without both, the OpenAI-compatible endpoint will not emit `tool_calls`. The model will describe the tool call in plain prose, your loop will see no tool call, and it will look exactly like your day 4 loop is broken. The parser name depends on the model family: `hermes` for Qwen2.5 and Qwen3, `llama3_json` for Llama 3.x, `mistral` for Mistral. If your model is not listed in the vLLM docs, that model is the wrong choice for this course. **Verify this on day 3 before you build the loop on day 4.**
+**`--enable-auto-tool-choice` and `--tool-call-parser`.** Both, or the endpoint never emits `tool_calls`. The model describes the tool call in prose, your loop sees nothing, and it looks exactly like your day 4 code is broken. Your current voice-rag service has neither, which is correct for voice-rag and fatal here. Parser by family: `hermes` for Qwen2.5 and Qwen3, `llama3_json` for Llama 3.x, `mistral` for Mistral.
 
-**`--reasoning-parser qwen3`.** Qwen3 emits reasoning inside `<think>` tags. Without the parser, that text lands in `message.content` and pollutes every agent turn, your summaries, and your eval scoring. With it, reasoning goes to a separate `reasoning_content` field and `content` stays clean. If you use a non-reasoning model, drop this flag.
+**`--reasoning-parser`**, only if your model emits reasoning. Qwen2.5 does not, so it is absent above. If you switch to Qwen3 or an R1 distill, add `--reasoning-parser qwen3` or the `<think>` blocks land in `message.content` and quietly corrupt every summary and every eval score.
 
-**`--enable-prefix-caching`.** On by default in current vLLM, but pass it explicitly so day 2 is unambiguous.
+**`--enable-prefix-caching`.** Default on in current vLLM, passed explicitly so day 2 is unambiguous.
 
-**`--served-model-name local`.** Aliases whatever you loaded to the name `local`. Now you swap models by restarting the server, and never touch your code.
+**`--max-model-len 32768`.** Your voice-rag value of 8192 is fine for voice turns. Week 2 agent history goes past it, and vLLM rejects over-length requests rather than truncating, so a small value shows up as errors in the middle of an eval run.
 
-**`--kv-cache-dtype fp8`** roughly halves KV cache memory, which is what buys you a 32k context on a 16 GB card. Drop it if you see quality problems, but measure rather than assume.
+**`--served-model-name local`** means your Python always says `model="local"`. Day 13 swaps four models by editing one compose line and restarting. Zero code changes.
 
-One note on your card: the 5060 Ti is Blackwell, compute capability 12.0. It needs a vLLM build against CUDA 12.8 or newer. You say it is running, so this is done, but if you rebuild and it fails to find kernels, that is why.
+### VRAM: run one stack at a time
+
+16 GB does not fit both stacks at 90 percent. Two aliases solve it:
+
+```bash
+alias course-up='docker compose -f ~/voice-rag/docker-compose.yml stop vllm voice-rag-backend && \
+                 docker compose -f ~/agent-course/infra/docker-compose.course.yml up -d'
+alias voice-up='docker compose -f ~/agent-course/infra/docker-compose.course.yml stop && \
+                docker compose -f ~/voice-rag/docker-compose.yml up -d'
+```
+
+Both at once is possible at `--gpu-memory-utilization 0.35` and `--max-model-len 8192` each, but week 2 evals get cramped. Prefer switching.
 
 ### From the MacBook
 
@@ -80,7 +97,7 @@ One note on your card: the 5060 Ti is Blackwell, compute capability 12.0. It nee
 # on the Linux box
 ip addr show | grep "inet "
 # from the Mac
-curl -H "Authorization: Bearer local-dev-key" http://192.168.1.50:8000/v1/models
+curl -H "Authorization: Bearer local-dev-key" http://192.168.1.106:8000/v1/models
 ```
 
 Home network only. Do not expose port 8000 to the internet.
@@ -88,7 +105,7 @@ Home network only. Do not expose port 8000 to the internet.
 ### The metrics endpoint, which you will use on day 2
 
 ```bash
-curl -s http://192.168.1.50:8000/metrics | grep -E "prefix_cache|num_requests"
+curl -s http://192.168.1.106:8000/metrics | grep -E "prefix_cache|num_requests"
 ```
 
 You get counters including `vllm:prefix_cache_queries_total` and `vllm:prefix_cache_hits_total`. Hit rate is the ratio. This is the number day 2 is about.
@@ -150,7 +167,7 @@ One package, `openai`, talks to every provider above. You are not using OpenAI. 
 
 ```bash
 LLM_PROVIDER=local
-VLLM_HOST=http://192.168.1.50:8000        # your Linux box; omit if running on it
+VLLM_HOST=http://192.168.1.106:8000        # your Linux box; omit if running on it
 VLLM_API_KEY=local-dev-key                # matches vllm serve --api-key
 ANTHROPIC_API_KEY=...                     # the judge, and day 2 part two
 CEREBRAS_API_KEY=...
