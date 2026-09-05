@@ -43,16 +43,15 @@ services:
     ipc: host                                 # vLLM needs host shared memory
     restart: unless-stopped
     healthcheck:
-      # CMD-SHELL, not CMD. The exec form resolves the binary itself against a
-      # bare PATH, with no shell; this image ships python3 and has no `python`
-      # alias, so ["CMD", "python", ...] fails with
+      # python3, not python. This image ships no `python` alias, so
+      # ["CMD", "python", ...] fails every probe with
       #   exec: "python": executable file not found in $PATH
-      # and the container sits in `starting` forever while the server is
-      # perfectly healthy. Note that `docker exec ... python` may still work
-      # interactively, so test a healthcheck by reading its recorded output,
-      # not by running the command by hand:
+      # while the server serves traffic normally, and the container sits in
+      # `starting` until it flips to `unhealthy`. Read the recorded probe
+      # output rather than guessing:
       #   docker inspect --format '{{json .State.Health}}' vllm-course
-      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)\""]
+      test: ["CMD", "python3", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)"]
       interval: 30s
       timeout: 5s
       retries: 20

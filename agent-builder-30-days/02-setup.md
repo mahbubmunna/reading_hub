@@ -187,13 +187,15 @@ That prints the `ExitCode` and `Output` of the last few probes. A probe failing 
 exec: "python": executable file not found in $PATH
 ```
 
-The vLLM image ships `python3` and no `python` alias, and a `["CMD", ...]` healthcheck resolves the executable directly against a bare PATH with no shell. So the probe never ran, the server was fine the whole time, and the container advertised `starting` indefinitely. The compose file now uses `CMD-SHELL` with `python3`.
+The vLLM image ships `python3` and no `python` alias. The probe therefore never ran at all, the server was fine the entire time, and the container advertised a state that described neither.
 
 Two things worth keeping from that:
 
-**A failing healthcheck is not a failing service.** They fail independently, and a red status that is actually a broken probe will send you debugging a healthy system. Always read `.State.Health` before touching the service.
+**A failing healthcheck is not a failing service.** They fail independently, and a red status that is actually a broken probe will send you debugging a healthy system. Read `.State.Health` before you touch the service.
 
-**Verifying a probe by running it yourself proves less than it appears to.** `docker exec ... python` can succeed interactively while the identical healthcheck fails, because they resolve binaries under different rules. The only trustworthy evidence about a healthcheck is the output Docker recorded from running it.
+**Beware of silently repairing a command while testing it.** The way this bug survived is worth more than the bug. The probe was run by hand to check it, it returned 200, and that seemed to clear it — but `python` had been changed to `python3` in the course of typing it, without the change registering as a change. The command that passed was not the command in the file, so the test confirmed nothing about the file.
+
+This is the ordinary shape of "works on my machine". You do not usually validate a broken command; you unconsciously fix it, then validate the fix while the broken version stays in the repo. The defence is to run the artefact rather than a retyping of it — `docker inspect` for a healthcheck, the actual script for a script — and when a hand-run and an automated run disagree, assume you changed something before assuming the environments differ.
 
 This is cosmetic today, since nothing depends on the condition. It stops being cosmetic in week 4, when `depends_on: condition: service_healthy` will hang your own stack's startup on a probe that can never pass.
 
