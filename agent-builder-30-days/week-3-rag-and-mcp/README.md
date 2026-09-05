@@ -1,5 +1,7 @@
 # Week 3: RAG and MCP on a Real Project
 
+> **Stack note.** Retrieval and MCP are provider independent, so almost nothing changes. See the days 15 to 21 section of `FREE-PROVIDER-GUIDE.md` for where to run embeddings.
+
 ## Goal
 
 Two production skills on one of your real projects. First, retrieval: give the agent a knowledge base it can search, and measure retrieval quality separately from answer quality. Second, MCP: expose your project's capabilities as tools any agent can use, including Claude Code.

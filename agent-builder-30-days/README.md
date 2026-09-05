@@ -9,6 +9,7 @@ This is written as a personal instructor would write it. It tells you what to do
 ```
 agent-builder-30-days/
   README.md                     <- you are here, read once
+  FREE-PROVIDER-GUIDE.md        <- your stack, and every day-file delta. Read second
   00-the-plan.md                <- the month at a glance, print it
   01-imagination-practice.md    <- the daily creativity routine
   02-setup.md                   <- do this before day 1
@@ -58,17 +59,23 @@ Three signals at day 30:
 
 Weeks 1 to 3 build a plain Python library: the loop, tools, memory, evals, retrieval, and an MCP server. Week 4 wraps that library in a FastAPI service with streaming, tracing, and a cost cap, then deploys it. Keeping the agent logic out of the web layer is deliberate. It is what lets you test it, eval it, and reuse it from MCP and from FastAPI without duplication.
 
-## Cost: run this for free
+## Your stack
 
-The day files are written against the Anthropic API because it is the clearest teaching surface. You do not have to use it, and you should not spend money on it.
+You run this on hardware you own, at essentially zero cost.
 
-**Read `FREE-PROVIDER-GUIDE.md` before `02-setup.md`.** It gives you a provider-agnostic client that runs the entire course on your own GPU plus free hosted tiers, at zero cost, and lists every place a day file differs. Your Claude Pro subscription already covers Claude Code as your coding assistant, which is a separate thing from the model your agent calls.
-
-The two paths:
-
-| | Setup | Cost |
+| Layer | What | Role |
 |---|---|---|
-| **Free (recommended)** | `FREE-PROVIDER-GUIDE.md` then `02-setup.md` | Zero |
-| Anthropic API | `02-setup.md` as written | About 20 to 60 USD for the month |
+| Models, default | vLLM on your RTX 5060 Ti, 16 GB | Unlimited local iteration. Every build day and every eval run |
+| Models, hosted backup | Cerebras, Groq | Speed, failover, and a second opinion for the day 13 comparison |
+| Models, paid, 40 USD credit | Anthropic | Four jobs only: the eval judge, the caching lesson, the capability ceiling, the live demo |
+| Embeddings and reranking | sentence-transformers, local | Free, and fast on the GPU |
+| Workstation | MacBook Air M1 | Your code, FastAPI, the RAG index, Claude Code |
+| Coding assistant | Claude Code, covered by Claude Pro | Separate from the model your agent calls |
 
-Start with `FREE-PROVIDER-GUIDE.md`.
+One client file speaks to all of them through the OpenAI-compatible Chat Completions format. Switching providers is one environment variable, and nothing downstream changes. That abstraction is itself a portfolio line in week 4.
+
+**The day files show Anthropic SDK code**, because it is the clearest surface for teaching the concepts. `FREE-PROVIDER-GUIDE.md` lists every place your stack differs, day by day, and carries the provider-agnostic client to copy into the project.
+
+Three lessons are **better** on your hardware than on a paid API. Prompt caching, because vLLM reports hit rates you can watch move. Structured output, because grammar constrained decoding makes invalid JSON impossible. And evals, because unlimited local runs let you measure a noise floor and compare four model tiers, which paid teams skip to protect their bill.
+
+**Read `FREE-PROVIDER-GUIDE.md` next, then `02-setup.md`.**

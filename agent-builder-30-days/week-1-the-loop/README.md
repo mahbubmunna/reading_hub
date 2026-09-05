@@ -1,5 +1,7 @@
 # Week 1: The Loop, By Hand
 
+> **Stack note.** Day files show Anthropic SDK code. Your stack differs on days 1, 2, 3, 4 and 6. See `FREE-PROVIDER-GUIDE.md`. **Verify the vLLM tool parser on day 3 before building the loop on day 4.**
+
 ## Goal
 
 Understand, at the level of individual API calls, what an agent is. By Sunday you will have written every piece of an agent loop yourself with no framework, and you will be able to explain it in two minutes without notes.

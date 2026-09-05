@@ -2,17 +2,17 @@
 
 Print this. Tick each deliverable when it exists and runs.
 
-Model provider: see `FREE-PROVIDER-GUIDE.md`. Nothing below changes based on which provider you use.
+**Stack:** vLLM on your GPU by default, Cerebras and Groq as backup, 40 USD of Anthropic credit reserved for four specific jobs. Setup in `02-setup.md`, day-by-day differences in `FREE-PROVIDER-GUIDE.md`. Nothing in this plan changes based on provider.
 
 ## Week 1: the loop, by hand (days 1 to 7)
 
-Raw Anthropic SDK, no frameworks. Streaming, structured output, prompt caching. Then your own agent loop with five hand written tools, retries, max steps, and a stop condition.
+Raw chat completions, no frameworks. Streaming, structured output, prompt caching. Then your own agent loop with five hand written tools, retries, max steps, and a stop condition.
 
 **Deliverable:** a coding agent that fixes a failing test in a small repo, plus a 500 word post explaining how the loop works.
 
-- [ ] Day 1: first API call, streaming, token usage printed
-- [ ] Day 2: structured output with Pydantic, prompt caching verified
-- [ ] Day 3: first tool call, manual round trip
+- [ ] Day 1: first API call, streaming, token usage printed, three providers answering
+- [ ] Day 2: grammar constrained JSON, cache hit rate moved on vLLM, cache read tokens seen on Anthropic
+- [ ] Day 3: first tool call, manual round trip, vLLM tool parser verified
 - [ ] Day 4: the loop with max steps and a stop condition
 - [ ] Day 5: five tools, safety limits, error results
 - [ ] Day 6: the coding agent fixes a failing test
@@ -22,15 +22,17 @@ Raw Anthropic SDK, no frameworks. Streaming, structured output, prompt caching. 
 
 Conversation trimming, summarization, SQLite memory, a token budget. Then an eval harness: 30 tasks, runner, scorer, report with pass rate, cost, latency.
 
-**Deliverable:** your agent measured before and after one prompt change, with numbers and a chart.
+**Deliverable:** your agent measured before and after one prompt change, with a noise floor from three baseline runs, plus a capability table across four model tiers.
 
 - [ ] Day 8: token budget and trimming
 - [ ] Day 9: summarization memory
 - [ ] Day 10: SQLite long term memory
 - [ ] Day 11: eval dataset of 30 tasks
-- [ ] Day 12: runner and scorers, including an LLM judge
-- [ ] Day 13: the before and after experiment
+- [ ] Day 12: runner, scorers, an independent judge on Anthropic, concurrent runner
+- [ ] Day 13: before and after, three baseline runs for the noise floor, four tier capability table
 - [ ] Day 14: review, chart, writeup
+
+Unlimited local runs are the advantage here. Run the baseline three times before changing anything, so your noise floor is measured rather than guessed. Paid teams skip that step to protect their bill.
 
 ## Week 3: RAG and MCP on a real project (days 15 to 21)
 
@@ -53,12 +55,22 @@ FastAPI, tracing, cost cap, adversarial inputs, Docker, live URL. Then the portf
 **Deliverable:** a link you can send to a recruiter.
 
 - [ ] Day 22: FastAPI with streaming
-- [ ] Day 23: tracing and cost dashboard
+- [ ] Day 23: tracing, call caps, shadow cost dashboard
 - [ ] Day 24: 20 adversarial inputs survived
-- [ ] Day 25: Docker and deploy
+- [ ] Day 25: Docker, deploy against a hosted provider, provider failover
 - [ ] Day 26: portfolio repo and architecture diagram
 - [ ] Day 27: demo video and failure writeup
 - [ ] Day 28 to 30: review, apply, plan month two
+
+## The five artefacts that get you hired
+
+Everything above produces these. If a week slips, protect these first.
+
+1. **The loop, written by hand**, with the post explaining it. Week 1.
+2. **An eval harness with a measured noise floor** and an independent judge. Week 2.
+3. **The four tier capability table**, on your own tasks. Day 13. Almost no applicant has this.
+4. **Retrieval measured separately from generation**, three iterations. Week 3.
+5. **A live URL with tracing, caps, and 20 adversarial cases survived**, plus the failure writeup. Week 4.
 
 ## Imagination, every day
 

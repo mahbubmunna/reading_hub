@@ -1,5 +1,7 @@
 # Week 4: Ship and Show
 
+> **Stack note.** Deploy against a hosted provider, not your GPU, and build provider failover instead of refusal fallbacks. See the days 22 to 25 section of `FREE-PROVIDER-GUIDE.md`.
+
 ## Goal
 
 Everything you built becomes a running service with a URL, and a portfolio a recruiter can read in five minutes. This week is FastAPI, tracing, cost control, safety, Docker, deployment, and presentation.

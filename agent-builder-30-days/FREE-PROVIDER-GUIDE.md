@@ -10,122 +10,132 @@ You do not need the Anthropic API. Every lesson in this course works against fre
 
 So: Claude Code stays as your pair programmer. Something else powers your agent.
 
-## Your hardware
-
-You have two machines, and they have different jobs.
+## Your setup
 
 | | MacBook Air | Linux box |
 |---|---|---|
-| Chip | Apple M1 | RTX 5060 Ti |
-| Memory | 8 GB unified | VRAM: check below |
-| Free disk | about 16 GB | check |
-| Job | Writing code, running the service, the browser | Running the models |
+| Chip | Apple M1 | RTX 5060 Ti, 16 GB VRAM |
+| Memory | 8 GB unified | serving with vLLM |
+| Job | Writing code, FastAPI, the RAG index, the browser | Running the models |
 
-**Check the GPU first.** On the Linux box:
+Plus Groq and Cerebras keys already set up, and 40 USD of Anthropic credit.
 
-```bash
-nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv
-ollama --version
-```
+This is a better setup than most people doing this course have, including people paying for it. Three things fall out of it.
 
-The 5060 Ti ships in 8 GB and 16 GB variants, and what you can run differs a lot between them.
+**vLLM gives you real prefix caching.** Day 2 was the one lesson that free tiers could not teach properly. vLLM has automatic prefix caching with hit rate metrics you can read, so you will measure cache hits on your own hardware instead of reading about them. That section is rewritten below.
 
-| VRAM | What runs well | Your daily model |
-|---|---|---|
-| 16 GB | 14B at 4-bit (about 9 GB), `gpt-oss:20b` (about 13 GB), 8B at 8-bit | `qwen3:14b` or `gpt-oss:20b` |
-| 8 GB | 8B at 4-bit (about 5 GB), 4B comfortably | `qwen3:8b` |
+**vLLM gives you real structured output.** Grammar constrained decoding means the JSON is valid by construction, not by hoping. That is stronger than most hosted free tiers.
 
-Either way this is a real local setup, and it changes the plan. **Local models become your default engine, not your fallback.** Unlimited calls, no rate limits, no quota anxiety, and week 2 evals can run hundreds of times without you thinking about it. That is worth more for learning than a slightly smarter hosted model.
+**Local is unlimited, so you can measure things paid teams skip.** Three baseline runs to establish a noise floor. A full model comparison across four tiers. Both are in the day deltas below.
 
-Two notes specific to your card. The 5060 Ti is Blackwell, so it needs a recent driver and a recent Ollama build. If `ollama run` falls back to CPU, that is almost always the cause: update the driver and Ollama before debugging anything else. And 16 GB VRAM does not mean 16 GB of model. Leave one to two GB of headroom for context. A long agent conversation grows the KV cache, and running out mid task looks like a mysterious slowdown as it spills to system RAM.
+## Serving with vLLM
 
-**The MacBook Air stays your workstation.** 8 GB is too small to run useful models locally, but it is fine for writing code, running FastAPI, the RAG index, and the browser. Point it at the Linux box over your network, which is the next section.
+### Models that fit 16 GB
 
-## Serving the GPU box to the MacBook
+vLLM preallocates VRAM, so unlike Ollama you must size the model and the context window together. Budget roughly: weights, plus KV cache, plus about 1 GB of overhead.
 
-Run models on the Linux machine, write code on the Air. On the Linux box:
+| Model | Weights | Good for | Context to ask for |
+|---|---|---|---|
+| `Qwen/Qwen3-8B` AWQ or GPTQ 4-bit | about 6 GB | Your daily driver. Fast, solid tool calling | 32k |
+| `Qwen/Qwen2.5-14B-Instruct-AWQ` | about 9 GB | When you want more reasoning | 16k |
+| `Qwen/Qwen2.5-Coder-14B-Instruct-AWQ` | about 9 GB | Week 1 coding agent | 16k |
+| `openai/gpt-oss-20b` | about 13 GB | Strongest local option, tight fit | 8k to 12k |
+| `Qwen/Qwen2.5-3B-Instruct` | about 2 GB | The deliberately weak one for day 13 | 8k |
 
-```bash
-# listen on the LAN, not just localhost
-sudo systemctl edit ollama
-# add:
-#   [Service]
-#   Environment="OLLAMA_HOST=0.0.0.0:11434"
-#   Environment="OLLAMA_KEEP_ALIVE=30m"
-sudo systemctl restart ollama
-ip addr show | grep "inet "        # note the 192.168.x.x address
-```
+Start with Qwen3-8B. Move up only if day 6 shows the model is the limit.
 
-From the Mac:
+### The launch command, with the flags that matter
 
 ```bash
-curl http://192.168.1.50:11434/api/tags     # your Linux box IP
+vllm serve Qwen/Qwen3-8B-AWQ \
+  --served-model-name local \
+  --max-model-len 32768 \
+  --gpu-memory-utilization 0.90 \
+  --enable-prefix-caching \
+  --enable-auto-tool-choice \
+  --tool-call-parser hermes \
+  --reasoning-parser qwen3 \
+  --kv-cache-dtype fp8 \
+  --host 0.0.0.0 --port 8000 \
+  --api-key local-dev-key
 ```
 
-Then in `.env` on the Mac:
+Four of those flags decide whether this course works at all.
+
+**`--enable-auto-tool-choice --tool-call-parser hermes`.** Without both, the OpenAI-compatible endpoint will not emit `tool_calls`. The model will describe the tool call in plain prose, your loop will see no tool call, and it will look exactly like your day 4 loop is broken. The parser name depends on the model family: `hermes` for Qwen2.5 and Qwen3, `llama3_json` for Llama 3.x, `mistral` for Mistral. If your model is not listed in the vLLM docs, that model is the wrong choice for this course. **Verify this on day 3 before you build the loop on day 4.**
+
+**`--reasoning-parser qwen3`.** Qwen3 emits reasoning inside `<think>` tags. Without the parser, that text lands in `message.content` and pollutes every agent turn, your summaries, and your eval scoring. With it, reasoning goes to a separate `reasoning_content` field and `content` stays clean. If you use a non-reasoning model, drop this flag.
+
+**`--enable-prefix-caching`.** On by default in current vLLM, but pass it explicitly so day 2 is unambiguous.
+
+**`--served-model-name local`.** Aliases whatever you loaded to the name `local`. Now you swap models by restarting the server, and never touch your code.
+
+**`--kv-cache-dtype fp8`** roughly halves KV cache memory, which is what buys you a 32k context on a 16 GB card. Drop it if you see quality problems, but measure rather than assume.
+
+One note on your card: the 5060 Ti is Blackwell, compute capability 12.0. It needs a vLLM build against CUDA 12.8 or newer. You say it is running, so this is done, but if you rebuild and it fails to find kernels, that is why.
+
+### From the MacBook
 
 ```bash
-LLM_PROVIDER=ollama
-OLLAMA_HOST=http://192.168.1.50:11434/v1
+# on the Linux box
+ip addr show | grep "inet "
+# from the Mac
+curl -H "Authorization: Bearer local-dev-key" http://192.168.1.50:8000/v1/models
 ```
 
-Only do this on your home network. Ollama has no authentication, so anyone on the network can use your GPU. Never expose port 11434 to the internet.
+Home network only. Do not expose port 8000 to the internet.
 
-`OLLAMA_KEEP_ALIVE=30m` matters more than it looks. By default Ollama unloads the model after five minutes, and reloading a 14B model takes several seconds. During a 30 task eval run with pauses, that reload cost dominates. Set it once and forget it.
+### The metrics endpoint, which you will use on day 2
+
+```bash
+curl -s http://192.168.1.50:8000/metrics | grep -E "prefix_cache|num_requests"
+```
+
+You get counters including `vllm:prefix_cache_queries_total` and `vllm:prefix_cache_hits_total`. Hit rate is the ratio. This is the number day 2 is about.
 
 ## The provider table
 
-Local first, hosted as backup. All of these speak the OpenAI Chat Completions format, so one code path handles every one of them. Hosted free-tier limits change often, so check each site rather than trusting numbers written here.
+Local first, hosted for the jobs where independence or uptime matters. All of these speak the OpenAI Chat Completions format, so one code path handles every one of them.
 
-| Provider | Cost | Tool calling | Role in your setup |
+| Provider | Cost | Role in your setup |
+|---|---|---|
+| **vLLM on your Linux box** | Free, unlimited | **Default.** Building, evals, caching lessons, structured output |
+| **Cerebras** | Free tier, already set up | Fastest hosted. Long eval runs when the GPU is busy or you are away from home |
+| **Groq** | Free tier, already set up | Second hosted opinion, and your failover target |
+| **Anthropic** | 40 USD credit | The eval judge, the capability ceiling, the deployed demo. See the budget below |
+| **Google AI Studio** | Free tier | Optional fourth opinion. Only if you want a fifth row in the day 13 table |
+
+### Spending the 40 USD of Anthropic credit
+
+Credit is finite, so spend it where a frontier model is genuinely irreplaceable rather than on daily building. Four places qualify.
+
+| Use | Model | Budget | Why it must be paid |
 |---|---|---|---|
-| **Ollama on your Linux box** | Free, unlimited, offline | Yes, on the models below | **Your default.** No quota, no rate limit, no network round trip |
-| **Google AI Studio (Gemini)** | Free tier, no card | Yes | The strong model when local is not enough. Also your eval judge. aistudio.google.com |
-| **Groq** | Free tier, no card | Yes | Very fast hosted, good when you want speed and your GPU is busy. console.groq.com |
-| **Cerebras** | Free tier | Yes | Backup when Groq rate limits. cloud.cerebras.ai |
-| **OpenRouter** | Free models exist | Varies | One key, many models. Useful for the model comparison in week 2 |
+| Week 2 eval judge, whole month | `claude-haiku-4-5` | 8 USD | The judge must be independent of the model under test and consistent across runs. A local judge grading a local agent is the classic mistake |
+| Day 2, prompt caching taught properly | `claude-opus-5` | 2 USD | The API reports `cache_read_input_tokens` per call, so you see caching as a billing line, not just a hit rate. Pair it with the vLLM version below and you understand both |
+| Day 13 capability ceiling, 10 task subset | `claude-opus-5` | 15 USD | The top row of your comparison table. Without it you do not know how far from the ceiling your local model is |
+| Week 4 deployed demo | `claude-haiku-4-5` | 10 USD | A recruiter opening your URL should not depend on your home GPU being awake |
+| Reserve | | 5 USD | Something will surprise you |
 
-Get the Gemini key today. It takes five minutes, needs no card, and you need a second independent model for the eval judge in week 2. Groq is worth ten more minutes as a backup. Everything else is optional.
+Set a 40 USD hard spend cap in the Anthropic console today, before writing any code. Then check the console once a week. If the judge line is growing faster than the table above predicts, your rubric is too long or you are rerunning evals more than planned. Both are worth knowing.
 
-### Models to pull
-
-On the Linux box, for 16 GB VRAM:
-
-```bash
-ollama pull qwen3:14b            # about 9 GB. Strong tool calling. Your daily driver
-ollama pull gpt-oss:20b          # about 13 GB. Better reasoning, slower. Try both
-ollama pull qwen2.5-coder:14b    # about 9 GB. For the week 1 coding agent
-ollama pull llama3.2:3b          # about 2 GB. The deliberately weak one, see below
-ollama pull nomic-embed-text     # about 275 MB. Optional GPU embeddings for week 3
-```
-
-For 8 GB VRAM, swap the first three for `qwen3:8b` and `qwen2.5-coder:7b`.
-
-Benchmark them on your own machine before choosing:
-
-```bash
-for m in qwen3:14b gpt-oss:20b; do
-  echo "== $m"
-  ollama run $m --verbose "Write a Python function that merges two sorted lists." 2>&1 | tail -5
-done
-```
-
-Look at eval rate in tokens per second. Under about 15 tokens per second, a 15 step agent run becomes painful. Pick the largest model that stays above that.
+Do not build daily on the credit. It will be gone in week 2 and you will lose the thing that makes your setup good, which is unlimited local iteration.
 
 ## Which provider for which job
 
 | Job | Use | Why |
 |---|---|---|
-| The agent itself, daily building | Ollama, `qwen3:14b` | Unlimited iterations. This is the whole advantage |
-| Week 1 coding agent | Ollama, `qwen2.5-coder:14b` | Code tuned, and the task is well defined |
-| Week 2 eval runs | Ollama | Hundreds of calls per run. Unlimited matters more than smart |
-| Week 2 LLM judge | **Gemini** | The judge must be independent of the agent. Never judge with the model under test |
-| Week 2 summarizer | Ollama, a small model | Cheap job, cheap model. Same lesson as the paid version |
-| Week 3 embeddings and reranking | Local sentence-transformers, on the GPU | Free, fast, already in the plan |
-| Week 4 live demo | Gemini or Groq | A recruiter clicking your URL should not depend on your home GPU being on |
-| The "how much does capability buy" experiment | Ollama 3B vs 14B vs Gemini | Three points on a curve, measured on your own tasks |
-
-That last row is worth noticing. On a paid setup you would compare two models once and stop, because each comparison costs money. With a local GPU you can compare freely, which means you can actually learn what model capability buys on your specific tasks. Most people applying for these jobs have never measured that.
+| Daily building, days 1 to 10 | vLLM, `local` | Unlimited iterations |
+| Week 1 coding agent | vLLM, Qwen2.5-Coder-14B-AWQ | Code tuned, well defined task |
+| Day 2 caching, part one | vLLM metrics | See the hit rate change on your own hardware |
+| Day 2 caching, part two | Anthropic, `claude-opus-5` | See it as tokens billed at a tenth of the price |
+| Week 2 eval runs | vLLM | Several hundred calls per run. Run the baseline three times |
+| Week 2 judge | **Anthropic, `claude-haiku-4-5`** | Independent of the agent, consistent across the month |
+| Week 2 summarizer | vLLM, a 3B model | Cheap job, cheap model. The real world lesson survives |
+| Week 3 embeddings and reranking | sentence-transformers on the GPU | Free and fast |
+| Day 13 capability table | 3B local, 8B local, Cerebras, Anthropic | Four points on a curve, on your own tasks |
+| Week 4 live demo | Anthropic, `claude-haiku-4-5` | Uptime a stranger can rely on |
+| Failover target | Cerebras, then Groq | Already configured, nothing to build |
 
 ## Install
 
@@ -139,13 +149,12 @@ One package, `openai`, talks to every provider above. You are not using OpenAI. 
 `.env`:
 
 ```bash
-LLM_PROVIDER=ollama
-OLLAMA_HOST=http://192.168.1.50:11434     # your Linux box; omit if running on it
-GEMINI_API_KEY=...                        # needed for the eval judge in week 2
-GROQ_API_KEY=...                          # backup
-# optional
+LLM_PROVIDER=local
+VLLM_HOST=http://192.168.1.50:8000        # your Linux box; omit if running on it
+VLLM_API_KEY=local-dev-key                # matches vllm serve --api-key
+ANTHROPIC_API_KEY=...                     # the judge, and day 2 part two
 CEREBRAS_API_KEY=...
-OPENROUTER_API_KEY=...
+GROQ_API_KEY=...
 ```
 
 ## The provider-agnostic client
@@ -196,23 +205,29 @@ PROVIDERS = {
         "big": "meta-llama/llama-3.3-70b-instruct:free",
         "small": "meta-llama/llama-3.2-3b-instruct:free",
     },
-    "ollama": {
-        # OLLAMA_HOST lets the MacBook point at the Linux box over the LAN
-        "base_url": os.getenv("OLLAMA_HOST", "http://localhost:11434") .rstrip("/") + "/v1",
-        "key_env": None,
-        "model": "qwen3:14b",
-        "big": "gpt-oss:20b",
-        "small": "llama3.2:3b",
+    "local": {   # vLLM on the Linux box
+        "base_url": os.getenv("VLLM_HOST", "http://localhost:8000").rstrip("/") + "/v1",
+        "key_env": "VLLM_API_KEY",
+        "model": "local",        # matches --served-model-name
+        "big": "local",
+        "small": "local",
+    },
+    "anthropic": {   # OpenAI-compatible endpoint; spend the credit deliberately
+        "base_url": "https://api.anthropic.com/v1/",
+        "key_env": "ANTHROPIC_API_KEY",
+        "model": "claude-haiku-4-5",
+        "big": "claude-opus-5",
+        "small": "claude-haiku-4-5",
     },
 }
 
-PROVIDER = os.getenv("LLM_PROVIDER", "ollama")
+PROVIDER = os.getenv("LLM_PROVIDER", "local")
 _cfg = PROVIDERS[PROVIDER]
 MODEL = os.getenv("LLM_MODEL", _cfg["model"])
 
 client = OpenAI(
     base_url=_cfg["base_url"],
-    api_key=os.getenv(_cfg["key_env"], "x") if _cfg["key_env"] else "ollama",
+    api_key=os.getenv(_cfg["key_env"], "x") if _cfg["key_env"] else "none",
 )
 
 
@@ -220,7 +235,7 @@ def client_for(provider: str) -> tuple[OpenAI, dict]:
     """A second client, for the judge or the summarizer. Keeps them independent."""
     c = PROVIDERS[provider]
     return OpenAI(base_url=c["base_url"],
-                  api_key=os.getenv(c["key_env"], "x") if c["key_env"] else "ollama"), c
+                  api_key=os.getenv(c["key_env"], "x") if c["key_env"] else "none"), c
 
 
 # Shadow pricing: these calls are free, but we still track what they WOULD cost
@@ -343,18 +358,20 @@ def estimate_tokens(messages: list[dict]) -> int:
 Test it:
 
 ```bash
-LLM_PROVIDER=ollama uv run python -c "
+LLM_PROVIDER=local uv run python -c "
 from llm import ask, text_of, spend
 print(text_of(ask([{'role':'user','content':'Say ready.'}])))
 print(spend.report())"
 
-LLM_PROVIDER=gemini uv run python -c "
+LLM_PROVIDER=cerebras uv run python -c "
 from llm import ask, text_of, spend
 print(text_of(ask([{'role':'user','content':'Say ready.'}])))
 print(spend.report())"
 ```
 
-Both should print "Ready." That is the whole point: one file, two providers, no code change. If the Ollama one hangs, the model is loading for the first time. If it is slow every time, check `nvidia-smi` while it runs. If the GPU is idle, Ollama is on the CPU and your driver or Ollama version is too old for Blackwell.
+Both should print "Ready." That is the whole point: one file, two providers, no code change.
+
+If the local one returns a 404 on the model, your `--served-model-name` does not say `local`. If it hangs, vLLM is still loading weights, which takes a minute on first start.
 
 ## What changes in the course, day by day
 
@@ -371,7 +388,11 @@ The "break it on purpose" exercises still work. Statelessness, `finish_reason`, 
 
 ### Day 2: structured output and caching
 
-**Structured output** works. Replace `client.messages.parse` with a JSON schema response format:
+Both halves of this day get **better** on your setup than in the paid version. Do not skip it.
+
+#### Structured output, grammar constrained
+
+vLLM constrains decoding to your schema, so invalid JSON is impossible rather than unlikely:
 
 ```python
 from pydantic import BaseModel
@@ -392,19 +413,81 @@ msg = ask(
 entry = CaseEntry.model_validate_json(msg.content)
 ```
 
-Some free models ignore `strict` and return slightly off JSON. That is a lesson, not a defeat: wrap the parse in a try, and on failure send the validation error back to the model and ask it to fix its own output. Write that retry. Real systems have it.
+vLLM also accepts `extra_body={"guided_json": CaseEntry.model_json_schema()}`, and `guided_choice` for a fixed set of options, and `guided_regex`. Try `guided_choice` on a classification: it is the cleanest way to force one of five labels and it is faster than asking for JSON.
 
-**Prompt caching** is mostly not available on free tiers. Do this instead:
+Then do the experiment that teaches the concept. Run the same extraction **without** the response format, twenty times, on the 3B model. Count how many produce valid parseable JSON. Then run it twenty times with the schema. The second number is twenty. Write both in your log. That gap is why constrained decoding exists, and you just measured it rather than read it.
 
-1. Read the caching section as theory. You still need to answer caching questions in interviews.
-2. Do the practical half: build the long stable system prompt, measure `prompt_tokens` across three questions, and confirm the number is large and repeated every time. That repeated number is exactly what caching would have eliminated.
-3. Write the paragraph: "on a provider with prefix caching, calls 2 and 3 would read N tokens from cache at roughly a tenth of the price, and this timestamp at the top of my prompt would have destroyed that."
+Add the repair loop anyway, because hosted providers do not all guarantee this:
 
-You learn the design rule, which is prefix stability, without paying for it. Keep volatile content at the end of your prompts anyway. It costs nothing and it is the right habit.
+```python
+try:
+    entry = CaseEntry.model_validate_json(msg.content)
+except ValidationError as e:
+    msg = ask(messages + [
+        {"role": "assistant", "content": msg.content},
+        {"role": "user", "content": f"That did not validate: {e}. Return only valid JSON."},
+    ])
+    entry = CaseEntry.model_validate_json(msg.content)
+```
+
+#### Prompt caching, measured twice
+
+**Part one, on your own GPU.** Build the long stable system prompt from the day 2 file. Before the first call, read the counters:
+
+```bash
+curl -s $VLLM_HOST/metrics | grep -E "vllm:prefix_cache_(queries|hits)_total"
+```
+
+Send three different questions against the same system prompt. Read the counters again. Hits divided by queries is your prefix cache hit rate, and it should be high after the first call.
+
+Now do the destructive experiment. Put the current time at the top of the system prompt:
+
+```python
+system = f"Time: {datetime.datetime.now()}\n" + rules
+```
+
+Send three more questions. Read the counters again. The hit rate collapses, because the prefix changed on every request. That is the single most common caching bug in real codebases, and you just caused it on purpose and watched the number move.
+
+Also watch latency. Time to first token drops noticeably on a cache hit with a long prefix. Record both numbers, hit rate and time to first token, before and after.
+
+**Part two, on Anthropic, about 2 USD.** vLLM shows you caching as a hit rate. Anthropic shows it as money. Run the same three questions with `LLM_PROVIDER=anthropic` and a `cache_control` breakpoint on the system block, then read `usage.cache_read_input_tokens` and `usage.cache_creation_input_tokens`.
+
+```python
+resp = client.messages.create(
+    model="claude-opus-5", max_tokens=200,
+    system=[{"type": "text", "text": rules, "cache_control": {"type": "ephemeral"}}],
+    messages=[{"role": "user", "content": q}],
+)
+print(resp.usage.cache_creation_input_tokens, resp.usage.cache_read_input_tokens)
+```
+
+Call one writes the cache. Calls two and three read it, at roughly a tenth of the input price.
+
+You now have both views of one mechanism: hit rate on hardware you control, and a billing line on a hosted API. Write the four sentence explanation covering both. Almost nobody can do that, because most people have only ever seen one side.
+
+#### The design rule, which is what actually matters
+
+Order the prefix stable to volatile: tools, then system prompt, then old history, then the new question. Never put a timestamp, a request id, an unsorted dict, or a per user greeting at the top. Note in your log that vLLM caches automatically by prefix while Anthropic needs an explicit breakpoint, but the rule that makes both work is identical.
 
 ### Day 3: the first tool
 
-The concept is identical. The wire format differs, and you should write both shapes in your notes.
+**Do this before anything else today.** Confirm vLLM is actually emitting tool calls:
+
+```bash
+curl -s $VLLM_HOST/v1/chat/completions \
+  -H "Authorization: Bearer $VLLM_API_KEY" -H 'content-type: application/json' \
+  -d '{"model":"local","messages":[{"role":"user","content":"What is 15% of 12450?"}],
+       "tools":[{"type":"function","function":{"name":"calculator",
+       "description":"Evaluate an arithmetic expression exactly.",
+       "parameters":{"type":"object","properties":{"expression":{"type":"string"}},
+       "required":["expression"]}}}],"tool_choice":"auto"}' | python3 -m json.tool
+```
+
+You must see a `tool_calls` array in the response. If instead you see prose describing the calculation, vLLM is missing `--enable-auto-tool-choice --tool-call-parser hermes`, or the parser is wrong for your model family. Fix the server now. Debugging this on day 4, inside a loop you just wrote, costs an evening.
+
+While you are here, confirm `content` has no `<think>` blocks in it. If it does, add `--reasoning-parser qwen3` and restart.
+
+The concept is identical to the Anthropic version. The wire format differs, and you should write both shapes in your notes.
 
 Tool definition:
 
@@ -478,9 +561,9 @@ No changes. Tools are your own Python. Wrap each definition in the `{"type": "fu
 
 ### Day 6: the coding agent
 
-Run it on `qwen2.5-coder:14b` locally. This is a well defined task with clear feedback, which is what code tuned models are good at.
+Run it on Qwen2.5-Coder-14B-AWQ locally. This is a well defined task with clear feedback, which is what code tuned models are good at.
 
-If it fails repeatedly, before blaming your loop, run the same task once on Gemini. If Gemini succeeds and local does not, the model is the limit and your loop is fine. Write down which steps the local model got wrong. That comparison is a genuine finding, and it is the first data point for the capability experiment on day 13.
+If it fails repeatedly, before blaming your loop, run the same task once on `claude-opus-5`, which costs a few cents. If Opus succeeds and local does not, the model is the limit and your loop is fine. Write down which steps the local model got wrong. That comparison is a genuine finding, and it is the first data point for the capability table on day 13.
 
 ### Days 8 to 10: memory
 
@@ -490,13 +573,13 @@ No changes except `estimate_tokens`, which the client above provides. There is n
 
 This is where free tiers shine and where the design gets better than the paid version.
 
-- **Agent under test:** Ollama on your GPU. A 30 task run at 15 steps each is several hundred calls. On a free hosted tier that is an afternoon of rate limit backoff. On your own GPU it is a coffee break, and you can run it five times to measure variance instead of once. This is the single biggest advantage your setup has over a paid one.
-- **Judge:** Gemini, using `client_for("gemini")`. Independent of the agent on purpose, and only about 35 calls per run, which fits any free tier comfortably. Never judge with the model under test. It grades its own style favourably.
+- **Agent under test:** vLLM on your GPU. A 30 task run at 15 steps each is several hundred calls. On a free hosted tier that is an afternoon of rate limit backoff. On your own GPU it is a coffee break, and you can run it five times to measure variance instead of once. This is the single biggest advantage your setup has over a paid one.
+- **Judge:** Anthropic `claude-haiku-4-5`, using `client_for("anthropic")`. Independent of the agent on purpose, and about 35 calls per run, roughly 15 cents. Never judge with the model under test. It grades its own style favourably.
 - **Cost column:** report shadow cost, and also the resource that is actually scarce for you: **wall clock seconds, calls per task, and tokens per second**. Measuring the constraint you actually have is the skill. On a paid setup it is dollars. On yours it is GPU time.
 
 Because runs are free, do what paid teams cannot afford: run the baseline three times before changing anything. The spread across those three runs is your noise floor, measured properly rather than guessed. Any improvement smaller than it is not real. Most people skip this step because it triples their bill. Yours is zero.
 
-Add rate limit handling anyway, for the judge calls to Gemini:
+Add rate limit handling anyway, for the judge calls to Anthropic:
 
 ```python
 import time
@@ -538,12 +621,12 @@ This week is a good argument for your portfolio: the MCP server works with any c
 
 **No changes** to FastAPI, tracing, guards, Docker, or deployment. Two adjustments:
 
-- **Deploy against a hosted provider, not your GPU.** A recruiter opening your URL at midnight should not depend on your home machine being awake. Set `LLM_PROVIDER=gemini` in the deployed environment and keep `ollama` as your local default. This is exactly why the provider lives in one environment variable, and it is worth one sentence in your README.
+- **Deploy against a hosted provider, not your GPU.** A recruiter opening your URL at midnight should not depend on your home machine being awake. Set `LLM_PROVIDER=anthropic` with `claude-haiku-4-5` in the deployed environment and keep `local` as your default everywhere else. This is exactly why the provider lives in one environment variable, and it is worth one sentence in your README.
 - **The cost cap becomes a call cap and a rate cap.** Instead of stopping at 25 cents per request, stop at 40 model calls per request and 500 per user per day. Keep the shadow cost column so the dashboard still shows what it would cost on a paid model. Say this in the demo. It shows you understand the difference between a limit and a budget.
-- **Skip the refusal fallback note** from day 1. Instead, implement provider fallback: if Gemini rate limits, retry on Groq. That is the same lesson, and it is a better one. Twenty lines in `llm.py`:
+- **Skip the refusal fallback note** from day 1. Instead, implement provider fallback: if your GPU is down or overloaded, retry on Cerebras, then Groq. That is the same lesson, and it is a better one. Twenty lines in `llm.py`:
 
 ```python
-FALLBACK_ORDER = ["gemini", "groq", "cerebras"]
+FALLBACK_ORDER = ["local", "cerebras", "groq"]
 
 def ask_with_fallback(messages, **kw):
     last = None
@@ -567,59 +650,61 @@ Clean it up so it does not mutate globals. Making it thread safe is a good exerc
 
 Change one line in your README. Instead of hiding that you used free providers, lead with it:
 
-> Built provider-agnostic against the OpenAI-compatible Chat Completions interface. Runs on Gemini, Groq, Cerebras, OpenRouter, and local Ollama with a one line change, with automatic failover between providers.
+> Built provider-agnostic against the OpenAI-compatible Chat Completions interface. Runs on self-hosted vLLM, Cerebras, Groq, and Anthropic with a one line change, with automatic failover between providers. Evaluated across four model tiers on the same task set and judge.
 
 That is a stronger sentence than naming a vendor. It says you understand the abstraction, you handled rate limits and failover, and you can run anywhere. Several teams will read that as the most practical thing in your repo.
 
 ## The capability experiment, day 13
 
-You have something most learners do not: three model tiers at zero marginal cost. Use them.
+You have four model tiers available and three of them are free. Nobody else doing this course has that. Use it.
 
-Run your 30 task eval set three times, on:
+Run your 30 task eval set on:
 
-1. `llama3.2:3b` locally
-2. `qwen3:14b` locally
-3. Gemini
+1. `Qwen2.5-3B-Instruct` locally, the weak one
+2. `Qwen3-8B-AWQ` locally, your daily driver
+3. Cerebras, a large hosted open model
+4. `claude-opus-5`, on a 10 task subset to protect the credit
 
-Same tasks, same prompt, same harness. Then fill in the table.
+Same tasks, same prompt, same harness, same judge. Fill in the table.
 
-| Model | Pass rate | Mean steps | Tokens per second | Failure pattern |
-|---|---|---|---|---|
+| Model | Pass rate | Mean steps | Tokens per second | Cost per task | Dominant failure |
+|---|---|---|---|---|---|
 
-Read the 3B failures carefully. You will see exactly where small models break: a required argument omitted, a tool called with the previous call's arguments, an answer given without calling the tool at all, the same edit repeated three times. The 14B run fixes most of those and shows you a different, subtler set. Gemini shows you what is left.
+Read the 3B failures line by line. You will see exactly where small models break: a required argument omitted, a tool called with the previous call's arguments, an answer given without calling the tool, the same edit repeated three times until the step limit. The 8B run fixes most of those and reveals a subtler set. Cerebras shows what scale buys. Opus shows the ceiling.
 
-Then write the paragraph: **"here is what model capability actually buys, measured on my own tasks, with the failure modes at each tier."** Almost nobody applying for these jobs can say that from their own data. It costs you one afternoon and no money, and it is the strongest single item in your week 2 writeup.
+Then write the paragraph: **"here is what model capability actually buys, measured on my own tasks, with the failure mode at each tier and the cost of closing each gap."**
 
-## Ollama operations
+That sentence, backed by your own table, is the strongest thing you will produce this month. Most candidates have opinions about model choice. You will have data.
 
-```bash
-ollama list                      # what you have
-ollama ps                        # what is loaded in VRAM right now
-ollama rm <model>                # reclaim disk
-nvidia-smi -l 1                  # watch VRAM while an agent run happens
-journalctl -u ollama -f          # server logs when something is wrong
-```
+One methodological note to include: the judge is the same across all four rows and is independent of every model under test. Say so explicitly. An interviewer who knows evals will check for exactly that.
 
-Four things that will bite you, in the order they will happen:
-
-**The context window silently truncates.** Ollama defaults to a small context, often 4096 tokens, regardless of what the model supports. Your week 2 agent history will exceed that and the oldest messages will vanish without an error, which looks exactly like your memory code being broken. Set it explicitly:
+## vLLM operations
 
 ```bash
-ollama run qwen3:14b
->>> /set parameter num_ctx 16384
->>> /save qwen3-agent
+nvidia-smi -l 1                                  # VRAM while an agent run happens
+curl -s $VLLM_HOST/metrics | grep vllm:          # cache, throughput, queue depth
+curl -s $VLLM_HOST/v1/models                     # confirm the served name
+journalctl -u vllm -f                            # or wherever your logs go
 ```
 
-Then use `qwen3-agent` as your model name. Check this on day 8, before you spend an evening debugging trimming code that works.
+Five things that will bite you, roughly in the order they will happen.
 
-**Tool calling quality varies by model, not just by size.** If a model ignores your tools entirely, try another before rewriting your descriptions. Confirm with a one tool test from day 3 first, so you know whether you are debugging the model or the prompt.
+**Tool calls silently become prose.** Missing `--enable-auto-tool-choice` or the wrong `--tool-call-parser`. Covered on day 3. This is the number one cause of "my agent loop does not work".
 
-**VRAM fills with context.** A long agent conversation grows the KV cache. If step 12 is suddenly ten times slower than step 3, you have spilled out of VRAM. Watch `nvidia-smi` during a run once so you recognise it.
+**Reasoning tags pollute your output.** Qwen3 emits `<think>` blocks. Without `--reasoning-parser`, they end up in `message.content`, then in your summaries, then in your eval scoring, and every number you produce is wrong in a way that is hard to see. Check `content` once on day 1 and you will never be caught by it.
 
-**Model reloads dominate short runs.** Set `OLLAMA_KEEP_ALIVE=30m` as in the setup section, or every pause in your eval run costs a reload.
+**Context is a hard wall, not a soft one.** vLLM refuses requests longer than `--max-model-len` with an error rather than truncating quietly. That is better than silent truncation, but week 2's growing history will hit it. Your trimming code from day 8 is what prevents it. Catch the error and treat it as a signal your budget is too high.
+
+**VRAM is preallocated.** `--gpu-memory-utilization 0.90` claims that fraction at startup regardless of the model size. If you cannot load a bigger model, lower `--max-model-len` before lowering the utilization, since KV cache is usually what does not fit.
+
+**Throughput is much better batched than serial.** Your day 12 eval runner calls tasks one at a time, which leaves the GPU mostly idle. Running five tasks concurrently with a thread pool can cut a 30 task run several fold, because vLLM batches continuously. That is a genuinely good day 12 exercise, and it is a real production insight: the bottleneck was never the GPU, it was your runner.
+
+
 
 ## The one thing to watch
 
-Free tiers change without notice. Limits get cut, models get retired, endpoints move. Before day 1, spend ten minutes on the Gemini and Groq documentation confirming the current model names and free limits, and put today's date next to what you find in your notes. When something breaks in week 3, the first thing to check is whether the model id still exists.
+Free tiers change without notice. Limits get cut, models get retired, endpoints move. Before day 1, spend ten minutes on the Cerebras and Groq documentation confirming the current model names and free limits, and put today's date next to what you find in your notes. When something breaks in week 3, the first thing to check is whether the model id still exists.
 
 This is also why the provider table lives in one dictionary in one file. When a provider changes, you edit five lines, not fifty.
+
+Two more, specific to you. vLLM's flag names move between releases, so pin the version you got working and write it in your notes. And check the Anthropic console spend page every Sunday during the weekly review, so the credit lasts the whole month.

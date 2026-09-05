@@ -1,5 +1,7 @@
 # Week 2: Memory, Context, and Evals
 
+> **Stack note.** Day files show Anthropic SDK code. Your stack differs on days 8 and 11 to 14. See `FREE-PROVIDER-GUIDE.md`. The judge runs on Anthropic credit; everything else runs local and unlimited, so run the baseline three times.
+
 ## Goal
 
 Two skills that separate hobby agents from hirable engineers. First, controlling what the model sees: a token budget, trimming, summarization, and a store that survives restarts. Second, measuring: an eval harness that tells you, with numbers, whether a change helped.
