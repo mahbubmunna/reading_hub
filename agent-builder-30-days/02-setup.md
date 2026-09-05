@@ -106,7 +106,7 @@ The model could not copy `12450` out of its own prompt and then degenerated into
 
 Fix it in this order, re-running the curl each time:
 
-1. **Remove `--kv-cache-dtype fp8`** if present. It quantizes stored keys and values to 8 bits, and on a kernel/GPU pairing that is not well tested it does far more damage than the accuracy loss it advertises. On an RTX 50xx, suspect it first.
+1. **Remove `--kv-cache-dtype fp8`** if present. It quantizes stored keys and values to 8 bits, and on a kernel/GPU pairing that is not well tested it does far more damage than the accuracy loss it advertises. On an RTX 50xx, suspect it first. This was the actual cause on a 5060 Ti: removing the flag alone, changing nothing else, turned degenerate output into a clean tool call.
 2. **Check which quantization kernel loaded.**
    ```bash
    docker compose -f docker-compose.course.yml logs vllm-course | grep -i -E "awq|marlin|quant"

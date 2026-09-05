@@ -165,6 +165,8 @@ services:
 #      on a kernel/GPU combination that is not well tested it costs a lot more
 #      than accuracy. Suspect it first: your voice-rag stack runs an AWQ model
 #      on this same card without it and behaves.
+#      CONFIRMED on an RTX 5060 Ti (sm_120): removing this flag alone, with no
+#      other change, turned degenerate output into a clean tool call.
 #
 #   2. The AWQ kernel itself. Check which one vLLM picked:
 #        docker compose -f docker-compose.course.yml logs vllm-course | grep -i -E "awq|marlin|quant"
