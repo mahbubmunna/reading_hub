@@ -25,7 +25,6 @@ services:
     command: >
       Qwen/Qwen2.5-7B-Instruct-AWQ
       --served-model-name local
-      --quantization awq
       --max-model-len 16384
       --gpu-memory-utilization 0.80
       --max-num-seqs 16
@@ -131,17 +130,32 @@ services:
 #   docker compose -f docker-compose.course.yml up -d
 #
 # ---------------------------------------------------------------------------
-# Model swaps for day 13's capability table: change --model and --quantization,
-# then `docker compose -f docker-compose.course.yml up -d --force-recreate`.
+# Model swaps for day 13's capability table: change the model name above, then
+# `docker compose -f docker-compose.course.yml up -d --force-recreate`.
 #
-# Note: the model is now passed as a POSITIONAL argument, not via --model.
-# vLLM deprecated the --model option and will remove it in v0.13.
-#
-#   Weak tier    Qwen/Qwen2.5-3B-Instruct              (no --quantization flag)
-#   Daily tier   Qwen/Qwen2.5-7B-Instruct-AWQ          awq
-#   Coding, wk1  Qwen/Qwen2.5-Coder-7B-Instruct-AWQ    awq
+#   Weak tier    Qwen/Qwen2.5-3B-Instruct
+#   Daily tier   Qwen/Qwen2.5-7B-Instruct-AWQ
+#   Coding, wk1  Qwen/Qwen2.5-Coder-7B-Instruct-AWQ
 #   Already on   hugging-quants/Meta-Llama-3.1-8B-Instruct-AWQ-INT4
-#     disk         awq, and switch the parser to llama3_json
+#     disk         switch the parser to llama3_json for this one
+#
+# The model name is the ONLY thing that changes. Two notes on why:
+#
+#   There is no --quantization flag. vLLM reads the quantization scheme from the
+#   model's own config.json and picks the fastest kernel that supports it. Naming
+#   a scheme explicitly does not just describe the model, it OVERRIDES that
+#   choice. `--quantization awq` on a card that supports awq_marlin gets you the
+#   slow reference kernel and this line, easy to miss in a wall of boot logs:
+#
+#     Detected that the model can run with awq_marlin, however you specified
+#     quantization=awq explicitly, so forcing awq. Use quantization=awq_marlin
+#     for faster inference
+#
+#   Measured on an RTX 5060 Ti: roughly 6 tokens/s forced to awq, several times
+#   that on auto-detection. Same model, same weights, same GPU.
+#
+#   The model is a POSITIONAL argument, not --model. vLLM deprecated --model and
+#   removes it in v0.13.
 
 # ---------------------------------------------------------------------------
 # If the model answers with GARBLED TEXT (and so never calls a tool)
@@ -171,7 +185,8 @@ services:
 #   2. The AWQ kernel itself. Check which one vLLM picked:
 #        docker compose -f docker-compose.course.yml logs vllm-course | grep -i -E "awq|marlin|quant"
 #      "awq_marlin" is the good path. A plain "awq" fallback on a very new card
-#      is where numerical garbage tends to live.
+#      is where numerical garbage tends to live. Note that an explicit
+#      --quantization flag can FORCE that fallback; see the model swap section.
 #
 #   3. Prove the GPU is fine by removing quantization from the equation:
 #        Qwen/Qwen2.5-3B-Instruct   (drop --quantization awq entirely)

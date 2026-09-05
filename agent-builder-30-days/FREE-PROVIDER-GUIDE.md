@@ -55,17 +55,17 @@ Use `infra/docker-compose.course.yml` from this course folder. It is a second se
 The command it runs:
 
 ```
---model Qwen/Qwen2.5-7B-Instruct-AWQ
+Qwen/Qwen2.5-7B-Instruct-AWQ
 --served-model-name local
---quantization awq
 --max-model-len 16384
 --gpu-memory-utilization 0.80
 --max-num-seqs 16
 --enable-prefix-caching
 --enable-auto-tool-choice
 --tool-call-parser hermes
---kv-cache-dtype fp8
 ```
+
+Note what is *absent* as much as what is present. There is no `--quantization` flag: vLLM reads the scheme from the model's `config.json` and picks the fastest kernel that supports it, and passing one explicitly overrides that choice rather than confirming it. On a 5060 Ti, `--quantization awq` forces the slow reference kernel over `awq_marlin` and costs several times the throughput. There is also no `--kv-cache-dtype fp8`; on this card it produced degenerate output, not merely a small accuracy loss.
 
 Four of those decide whether the course works at all.
 

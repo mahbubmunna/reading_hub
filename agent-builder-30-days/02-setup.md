@@ -118,6 +118,38 @@ Known-good replacements once you know the cause: `RedHatAI/Qwen2.5-7B-Instruct-F
 
 The bar for passing is all three at once: coherent sentences, the digits `12450` reproduced exactly, and a populated `tool_calls` array.
 
+### A4b. Measure your tokens per second
+
+A working endpoint is not the same as a usable one. Day 1 makes single calls and you will not notice slow. Day 12 runs 30 fixtures with multiple turns each, and the difference between 6 and 40 tokens/s is the difference between a coffee break and an overnight job. Measure now.
+
+```bash
+docker compose -f docker-compose.course.yml logs -f vllm-course | grep "generation throughput"
+```
+
+Leave that running, fire the A4 curl in another terminal, and read `Avg generation throughput`. On a 16 GB card with a 7B AWQ model, expect tens of tokens per second. If you see single digits, something is misconfigured.
+
+The first thing to check is the quantization kernel, because the failure is silent and scrolls past during boot:
+
+```bash
+docker compose -f docker-compose.course.yml logs vllm-course | grep -i marlin
+```
+
+If you see this, you are running several times slower than the hardware allows:
+
+```
+Detected that the model can run with awq_marlin, however you specified
+quantization=awq explicitly, so forcing awq. Use quantization=awq_marlin
+for faster inference
+```
+
+The fix is to **remove** the `--quantization` flag, not to correct it. vLLM reads the scheme from the model's own `config.json` and selects the fastest kernel that supports it. Naming a scheme explicitly does not confirm that choice, it overrides it — so the flag that looks like documentation is actually an instruction, and a pessimising one.
+
+That is the general lesson, and it will cost you time again elsewhere if you don't take it now: **a config flag that merely restates a default is not free.** It silently opts you out of auto-detection, and auto-detection is usually smarter than you are about the machine you happen to be sitting at.
+
+Second thing to check, if the kernel is right and it's still slow: `nvidia-smi`. Confirm nothing else holds significant VRAM. A desktop session costs roughly 0.8 GB across Xorg, your shell, and the browser, which is expected and already budgeted for. Another vLLM is not.
+
+Write the number you get into your day 0 log. When you change models on day 13, you will want the baseline.
+
 ### A5. VRAM: run one stack at a time
 
 You have 16 GB. The course service asks for 80 percent of it, which is right when it runs alone and will fail to allocate if voice-rag's vLLM is also up.
