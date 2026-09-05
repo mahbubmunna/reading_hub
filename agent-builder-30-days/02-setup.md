@@ -124,23 +124,22 @@ A working endpoint is not the same as a usable one. Day 1 makes single calls and
 
 Do **not** measure this by reading `Avg generation throughput` out of the vLLM logs. That number is tokens counted in a fixed 10-second window divided by 10 seconds, not the rate while the model was generating. A request that finishes in 4 seconds is reported at 40 percent of its real speed, and you cannot tell from the line itself. The giveaway: when `Avg prompt throughput` reads 17.5 and your prompt was exactly 175 tokens, you are looking at a window average, not a rate.
 
-Time the wall clock instead, over a generation long enough that startup overhead stops dominating:
+Use the benchmark in this repo. Standard library only, so it needs no venv and no installs on the Linux box:
 
 ```bash
-python3 - <<'EOF'
-import json, time, urllib.request
-req = urllib.request.Request(
-    "http://localhost:8000/v1/chat/completions",
-    data=json.dumps({"model": "local", "temperature": 0, "max_tokens": 500,
-        "messages": [{"role": "user", "content": "Write 400 words about why prefix caching matters."}]}).encode(),
-    headers={"Authorization": "Bearer local-dev-key", "content-type": "application/json"})
-t = time.time()
-d = json.load(urllib.request.urlopen(req))
-dt = time.time() - t
-n = d["usage"]["completion_tokens"]
-print(f"{n} tokens in {dt:.1f}s = {n/dt:.1f} tok/s")
-EOF
+python3 scripts/bench_llm.py
 ```
+
+It streams the response and reports two numbers separately, because they are different problems with different fixes:
+
+| | what it is | what changes it |
+|---|---|---|
+| **TTFT** | time to first token: queueing plus prefill | prompt length, prefix caching |
+| **decode** | tokens/s *after* the first token | model size, quantization kernel, memory bandwidth |
+
+An agent turn pays TTFT once and decode once per token it writes. So a slow agent with short tool-call outputs is a TTFT problem, and a slow agent with long written answers is a decode problem. A single blended tokens/s figure cannot tell you which one you have, which is why the naive version — total tokens over total wall clock — is not good enough either. It buries TTFT inside the average.
+
+The script runs three times with a slightly different prompt each time, so prefix caching does not flatter the TTFT, and reports the best decode rate.
 
 To know whether your number is good, compute the ceiling rather than guessing. Single-stream decode is memory-bound: every token requires reading the whole weight set, so the ceiling is roughly `memory bandwidth / weight size`. An RTX 5060 Ti has 448 GB/s and a 4-bit 7B is about 5 GB, giving ~80 tok/s in theory and 30-50 in practice. Land far below that and something is misconfigured, and you now have a principled reason for saying so instead of a vibe.
 
