@@ -90,13 +90,37 @@ curl -s localhost:8000/v1/chat/completions \
        "required":["expression"]}}}],"tool_choice":"auto"}' | python3 -m json.tool
 ```
 
-You must see a `tool_calls` array with a `calculator` call in it. If you get prose describing the arithmetic instead, the parser flags are wrong. Fix it today.
+A pass is a `tool_calls` array containing a `calculator` call. Check two more things in the same response: `content` has no `<think>` tags, and a `usage` object is present.
 
-Check two more things in that response: `content` has no `<think>` tags, and a `usage` object is present.
+If it fails, **read the prose before you touch the parser flags.** There are two different failures that both show `"tool_calls": []`, and they have nothing to do with each other.
+
+**Failure 1: coherent prose, no tool call.** Something like *"15% of 12450 is 1867.50."* The model understood the question, answered it correctly in text, and simply never emitted a call. That is the parser problem. Confirm `--enable-auto-tool-choice` and `--tool-call-parser` are both present, and that the parser matches the model family (`hermes` for Qwen, `llama3_json` for Llama 3.x, `mistral` for Mistral).
+
+**Failure 2: garbled prose.** Something like:
+
+```
+To find 15% of 14,45 ... 1445 **0.15 ... So, 15% of 1 is45 is n is n is n0n10
+```
+
+The model could not copy `12450` out of its own prompt and then degenerated into repeated tokens. **This is broken inference, not a parser problem**, and no parser setting will help — a model in this state cannot produce a well-formed call. Do not spend an evening cycling through parser names; that is a wasted evening.
+
+Fix it in this order, re-running the curl each time:
+
+1. **Remove `--kv-cache-dtype fp8`** if present. It quantizes stored keys and values to 8 bits, and on a kernel/GPU pairing that is not well tested it does far more damage than the accuracy loss it advertises. On an RTX 50xx, suspect it first.
+2. **Check which quantization kernel loaded.**
+   ```bash
+   docker compose -f docker-compose.course.yml logs vllm-course | grep -i -E "awq|marlin|quant"
+   ```
+   `awq_marlin` is the good path. A plain `awq` fallback on a very new card is where numerical garbage tends to live.
+3. **Take quantization out of the equation.** Run `Qwen/Qwen2.5-3B-Instruct` with no `--quantization` flag at all. About 6 GB of bf16 weights, ordinary well-trodden kernels. If 3B is coherent and 7B-AWQ is not, quantization is guilty and your GPU is fine.
+
+Known-good replacements once you know the cause: `RedHatAI/Qwen2.5-7B-Instruct-FP8-dynamic` with `--quantization fp8` (FP8 is native on Blackwell, roughly 8 GB), or `hugging-quants/Meta-Llama-3.1-8B-Instruct-AWQ-INT4` with `--tool-call-parser llama3_json`, which is already on your disk and already proven on this card by voice-rag.
+
+The bar for passing is all three at once: coherent sentences, the digits `12450` reproduced exactly, and a populated `tool_calls` array.
 
 ### A5. VRAM: run one stack at a time
 
-You have 16 GB. The course service asks for 90 percent of it, which is right when it runs alone and will fail to allocate if voice-rag's vLLM is also up.
+You have 16 GB. The course service asks for 80 percent of it, which is right when it runs alone and will fail to allocate if voice-rag's vLLM is also up.
 
 ```bash
 # switch to course work

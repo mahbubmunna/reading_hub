@@ -32,7 +32,6 @@ services:
       --enable-prefix-caching
       --enable-auto-tool-choice
       --tool-call-parser hermes
-      --kv-cache-dtype fp8
       --host 0.0.0.0
       --port 8000
     deploy:
@@ -69,7 +68,7 @@ services:
 #       On by default in current vLLM, passed explicitly so day 2 is unambiguous.
 #       Day 2 reads the hit rate off /metrics and then breaks it on purpose.
 #
-#   --max-model-len 32768
+#   --max-model-len 16384
 #       Week 2 grows agent history past 8k. vLLM REJECTS over-long requests
 #       rather than truncating, so a small value shows up as errors mid-eval.
 #
@@ -143,3 +142,50 @@ services:
 #   Coding, wk1  Qwen/Qwen2.5-Coder-7B-Instruct-AWQ    awq
 #   Already on   hugging-quants/Meta-Llama-3.1-8B-Instruct-AWQ-INT4
 #     disk         awq, and switch the parser to llama3_json
+
+# ---------------------------------------------------------------------------
+# If the model answers with GARBLED TEXT (and so never calls a tool)
+#
+# Symptom, from the step A4 curl:
+#
+#   "To find 15% of 14,45 ... 1445 **0.15 ... is n is n is n0n10"
+#   "tool_calls": []
+#
+# Read the prose, not the empty array. The model could not copy the number
+# 12450 out of its own prompt and then degenerated into repeated tokens. That
+# is broken inference, NOT a tool-parser problem. No parser can extract a call
+# from a model in this state, so fix the quality first and only then re-judge
+# the parser.
+#
+# Causes, in the order worth testing on a 16 GB Blackwell card (RTX 50xx, and
+# note that sm_120 is newer than a lot of quantization kernels):
+#
+#   1. --kv-cache-dtype fp8    REMOVED above. This quantizes every stored key
+#      and value to 8 bits. It buys KV cache headroom and costs accuracy, and
+#      on a kernel/GPU combination that is not well tested it costs a lot more
+#      than accuracy. Suspect it first: your voice-rag stack runs an AWQ model
+#      on this same card without it and behaves.
+#
+#   2. The AWQ kernel itself. Check which one vLLM picked:
+#        docker compose -f docker-compose.course.yml logs vllm-course | grep -i -E "awq|marlin|quant"
+#      "awq_marlin" is the good path. A plain "awq" fallback on a very new card
+#      is where numerical garbage tends to live.
+#
+#   3. Prove the GPU is fine by removing quantization from the equation:
+#        Qwen/Qwen2.5-3B-Instruct   (drop --quantization awq entirely)
+#      ~6 GB of bf16 weights, fits comfortably, uses ordinary well-trodden
+#      kernels. If 3B is coherent and 7B-AWQ is not, the quantization path is
+#      guilty and the card is not.
+#
+# Known-good alternatives once you have confirmed the cause:
+#
+#   RedHatAI/Qwen2.5-7B-Instruct-FP8-dynamic   --quantization fp8
+#       FP8 is native on Blackwell, ~8 GB of weights. Usually the best 7B
+#       option on this generation of card.
+#   hugging-quants/Meta-Llama-3.1-8B-Instruct-AWQ-INT4   awq
+#       Already on your disk and already proven on this GPU by voice-rag.
+#       Switch --tool-call-parser to llama3_json when you use it.
+#
+# Re-run the step A4 curl after every change. The bar is not "it produced
+# something", it is: coherent sentences, the digits 12450 reproduced exactly,
+# and a populated tool_calls array.
