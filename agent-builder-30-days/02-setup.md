@@ -169,6 +169,34 @@ Second thing to check, if the kernel is right and it's still slow: `nvidia-smi`.
 
 Write the number you get into your day 0 log. When you change models on day 13, you will want the baseline.
 
+### A4c. Confirm the container reports healthy
+
+```bash
+docker ps --format '{{.Names}}\t{{.Status}}'
+```
+
+You want `Up N minutes (healthy)`. If it says `(unhealthy)` or sits at `(starting)` long after boot, read what Docker recorded rather than re-running the probe by hand:
+
+```bash
+docker inspect --format '{{json .State.Health}}' vllm-course | python3 -m json.tool
+```
+
+That prints the `ExitCode` and `Output` of the last few probes. A probe failing for its own reasons looks nothing like a sick server, and the output says which you have. The one that bit this course:
+
+```
+exec: "python": executable file not found in $PATH
+```
+
+The vLLM image ships `python3` and no `python` alias, and a `["CMD", ...]` healthcheck resolves the executable directly against a bare PATH with no shell. So the probe never ran, the server was fine the whole time, and the container advertised `starting` indefinitely. The compose file now uses `CMD-SHELL` with `python3`.
+
+Two things worth keeping from that:
+
+**A failing healthcheck is not a failing service.** They fail independently, and a red status that is actually a broken probe will send you debugging a healthy system. Always read `.State.Health` before touching the service.
+
+**Verifying a probe by running it yourself proves less than it appears to.** `docker exec ... python` can succeed interactively while the identical healthcheck fails, because they resolve binaries under different rules. The only trustworthy evidence about a healthcheck is the output Docker recorded from running it.
+
+This is cosmetic today, since nothing depends on the condition. It stops being cosmetic in week 4, when `depends_on: condition: service_healthy` will hang your own stack's startup on a probe that can never pass.
+
 ### A5. VRAM: run one stack at a time
 
 You have 16 GB. The course service asks for 80 percent of it, which is right when it runs alone and will fail to allocate if voice-rag's vLLM is also up.
