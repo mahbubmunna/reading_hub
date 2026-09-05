@@ -141,7 +141,11 @@ An agent turn pays TTFT once and decode once per token it writes. So a slow agen
 
 The script runs three times with a slightly different prompt each time, so prefix caching does not flatter the TTFT, and reports the best decode rate.
 
-To know whether your number is good, compute the ceiling rather than guessing. Single-stream decode is memory-bound: every token requires reading the whole weight set, so the ceiling is roughly `memory bandwidth / weight size`. An RTX 5060 Ti has 448 GB/s and a 4-bit 7B is about 5 GB, giving ~80 tok/s in theory and 30-50 in practice. Land far below that and something is misconfigured, and you now have a principled reason for saying so instead of a vibe.
+To know whether your number is good, compute the ceiling rather than guessing. Single-stream decode is memory-bound: every token requires reading the whole weight set once, so the ceiling is roughly `memory bandwidth / weight size`. An RTX 5060 Ti has 448 GB/s and a 4-bit 7B is about 4 GB, giving roughly 110 tok/s in theory. Good kernels reach 70-80% of a bandwidth ceiling.
+
+The measured result on this exact setup — Qwen2.5-7B-Instruct-AWQ, 5060 Ti, the compose file in `infra/` — is **84 tok/s decode and 26ms TTFT**. That is your target. Under about 60 means a configuration problem rather than a slow card, and you now have a principled reason for saying so instead of a vibe.
+
+Note how much this matters for day 13. When you compare a 3B against a 7B, you need to know that a difference is the *model* and not a kernel that silently fell back. A baseline you measured yourself is what makes that comparison trustworthy.
 
 The first thing to check is the quantization kernel, because the failure is silent and scrolls past during boot:
 

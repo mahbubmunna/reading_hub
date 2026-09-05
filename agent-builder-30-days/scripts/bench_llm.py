@@ -99,11 +99,14 @@ Single-stream decode is memory-bound: every token reads the entire weight set
 once, so the ceiling is roughly (memory bandwidth / weight size).
 
   RTX 5060 Ti     448 GB/s
-  7B at 4-bit     ~5 GB of weights
-  ceiling         ~80 tok/s, with 30-50 realistic after overhead
+  7B at 4-bit     ~4 GB (4-bit weights plus fp16 embeddings and norms)
+  ceiling         ~110 tok/s
 
-Well under that on a 7B means a configuration problem, not a slow card. Check
-the quantization kernel first, it is the usual culprit and it fails silently:
+Real kernels reach 70-80% of that. Measured on this exact setup, Qwen2.5-7B
+AWQ on a 5060 Ti: 84 tok/s decode, 26ms TTFT. Treat that as the target.
+
+Under about 60 means a configuration problem, not a slow card. Check the
+quantization kernel first, it is the usual culprit and it fails silently:
 
   docker compose -f docker-compose.course.yml logs vllm-course | grep -i marlin
 
