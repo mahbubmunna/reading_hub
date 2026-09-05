@@ -36,9 +36,9 @@ vLLM preallocates VRAM, so unlike Ollama you must size the model and the context
 
 | Model | Weights | Good for | Context to ask for |
 |---|---|---|---|
-| `Qwen/Qwen2.5-7B-Instruct-AWQ` | about 5.5 GB | Your daily driver. Known-good tool calling with `hermes` | 32k |
-| `Qwen/Qwen2.5-Coder-7B-Instruct-AWQ` | about 5.5 GB | Week 1 coding agent | 32k |
-| `Qwen/Qwen2.5-14B-Instruct-AWQ` | about 9 GB | More reasoning, if day 6 shows the 7B is the limit | 16k |
+| `Qwen/Qwen2.5-7B-Instruct-AWQ` | about 5.5 GB | Your daily driver. Known-good tool calling with `hermes` | 16k |
+| `Qwen/Qwen2.5-Coder-7B-Instruct-AWQ` | about 5.5 GB | Week 1 coding agent | 16k |
+| `Qwen/Qwen2.5-14B-Instruct-AWQ` | about 9 GB | More reasoning, if day 6 shows the 7B is the limit | 8k, and expect a tight fit |
 | `Qwen/Qwen2.5-3B-Instruct` | about 2 GB | The deliberately weak one for day 13 | 8k |
 | `hugging-quants/Meta-Llama-3.1-8B-Instruct-AWQ-INT4` | already on disk | Zero download. Use `llama3_json` parser | 16k |
 
@@ -58,8 +58,9 @@ The command it runs:
 --model Qwen/Qwen2.5-7B-Instruct-AWQ
 --served-model-name local
 --quantization awq
---max-model-len 32768
---gpu-memory-utilization 0.90
+--max-model-len 16384
+--gpu-memory-utilization 0.80
+--max-num-seqs 16
 --enable-prefix-caching
 --enable-auto-tool-choice
 --tool-call-parser hermes
@@ -74,7 +75,7 @@ Four of those decide whether the course works at all.
 
 **`--enable-prefix-caching`.** Default on in current vLLM, passed explicitly so day 2 is unambiguous.
 
-**`--max-model-len 32768`.** Your voice-rag value of 8192 is fine for voice turns. Week 2 agent history goes past it, and vLLM rejects over-length requests rather than truncating, so a small value shows up as errors in the middle of an eval run.
+**`--max-model-len 16384`.** Your voice-rag value of 8192 is fine for voice turns but too small for agent history. 16384 is what fits alongside CUDA graphs on a 16 GB card at a safe utilization; going to 32768 is what caused the CUDA OOM on first boot. Set `budget_tokens` to 12000 on day 8 to stay inside it. vLLM rejects over-length requests rather than truncating, so this shows up as a clear error, not silent corruption.
 
 **`--served-model-name local`** means your Python always says `model="local"`. Day 13 swaps four models by editing one compose line and restarting. Zero code changes.
 
@@ -584,7 +585,18 @@ If it fails repeatedly, before blaming your loop, run the same task once on `cla
 
 ### Days 8 to 10: memory
 
-No changes except `estimate_tokens`, which the client above provides. There is no `count_tokens` endpoint on free providers, so the four-characters-per-token estimate is what you have. Note in your log that this estimate is wrong by ten to twenty percent and that your budget should have headroom because of it. That is a real engineering judgement.
+**Set `budget_tokens` to 12000, not 30000.** Your vLLM serves a 16384 token context, and vLLM rejects an over-long request with an error rather than truncating it. A 12000 token history budget leaves room for the response.
+
+This is a better lesson than the paid version, not a worse one. On a 1M context API you can be sloppy about context and never notice. Here the wall is real and close, so your trimming code has to actually work, and you will see it working. Catch the vLLM length error explicitly and treat it as a signal your budget is set too high:
+
+```python
+except RuntimeError as e:
+    if "maximum context length" in str(e) or "longer than the maximum" in str(e):
+        raise RuntimeError("budget_tokens is too high for max-model-len") from e
+    raise
+```
+
+Everything else is unchanged except `estimate_tokens`, which the client above provides. There is no `count_tokens` endpoint on free providers, so the four-characters-per-token estimate is what you have. Note in your log that this estimate is wrong by ten to twenty percent and that your budget should have headroom because of it. That is a real engineering judgement.
 
 ### Days 11 to 14: evals
 

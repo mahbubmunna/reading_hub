@@ -58,6 +58,24 @@ Your existing service is correct for voice-rag and wrong for this course, in fou
 
 The course compose fixes all four. Leave your voice-rag file alone.
 
+### A3b. If it fails with CUDA out of memory
+
+Common on a 16 GB card, and the compose file is already tuned to avoid it. If you still hit it:
+
+```bash
+nvidia-smi          # is the voice-rag stack still up? is a desktop session holding VRAM?
+```
+
+The error appears near the end of boot, during CUDA graph capture, saying it tried to allocate a couple of hundred MiB with almost nothing free. vLLM sizes its budget as a fraction of **total** GPU memory, fills the KV cache to that budget, then captures CUDA graphs, and it does not count the CUDA context or your display server, roughly 0.8 GiB on a desktop.
+
+Turn these down in order, restarting each time, and stop when it boots:
+
+1. `--gpu-memory-utilization` to `0.75`
+2. `--max-model-len` to `8192`
+3. Add `--enforce-eager`, which skips graph capture entirely and frees 1 to 2 GiB for perhaps 10 to 20 percent less throughput
+
+If `--enforce-eager` alone fixes it, graphs were the cause and you can raise the other two back up.
+
 ### A4. Verify tool calling now, not on day 4
 
 This is the single most important command in the setup.
@@ -232,6 +250,7 @@ cp ~/mahbub_space/agent-builder-30-days/templates/*.md ~/agent-course/notes/
 
 - [ ] `docker run --gpus all ... nvidia-smi` sees the GPU
 - [ ] `docker-compose.course.yml` is on the Linux box and the service is up on port 8000
+- [ ] The service boots without CUDA OOM
 - [ ] **The curl test returns a real `tool_calls` array.** Nothing else matters until this passes
 - [ ] `content` has no `<think>` tags, and `usage` is present
 - [ ] Shell aliases exist for switching between the course and voice-rag stacks

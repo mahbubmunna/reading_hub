@@ -19,14 +19,16 @@ services:
     environment:
       - HF_TOKEN=${HF_TOKEN}                 # only needed for gated repos like Llama
       - VLLM_API_KEY=${VLLM_API_KEY:-local-dev-key}
+      - PYTORCH_ALLOC_CONF=expandable_segments:True   # reduces allocator fragmentation
     volumes:
       - ~/.cache/huggingface:/root/.cache/huggingface
     command: >
-      --model Qwen/Qwen2.5-7B-Instruct-AWQ
+      Qwen/Qwen2.5-7B-Instruct-AWQ
       --served-model-name local
       --quantization awq
-      --max-model-len 32768
-      --gpu-memory-utilization 0.90
+      --max-model-len 16384
+      --gpu-memory-utilization 0.80
+      --max-num-seqs 16
       --enable-prefix-caching
       --enable-auto-tool-choice
       --tool-call-parser hermes
@@ -81,14 +83,48 @@ services:
 #   every summary, and every eval score.
 #
 # ---------------------------------------------------------------------------
+# If you get "CUDA out of memory" on startup
+#
+# The failure looks like this, during CUDA graph capture near the end of boot:
+#
+#   torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 260.00 MiB.
+#   GPU 0 has a total capacity of 15.47 GiB of which 67.69 MiB is free.
+#   ... 352.00 MiB allocated in private pools (e.g., CUDA Graphs)
+#
+# Why: vLLM sizes its budget as a fraction of TOTAL GPU memory, fills the KV
+# cache pool to that budget, and only THEN captures CUDA graphs. It also does
+# not count the CUDA context or whatever your display server is holding,
+# roughly 0.8 GiB on a desktop. At 0.90 there is nothing left for the graphs.
+#
+# Fix in this order, stopping when it boots:
+#
+#   1. Confirm nothing else is resident:  nvidia-smi
+#      Stop the voice-rag stack if it is up. On a headless box you get ~0.8 GiB
+#      back by not running a desktop session at all.
+#   2. --gpu-memory-utilization 0.80   (set above; from 0.90)
+#   3. --max-model-len 16384           (set above; from 32768)
+#   4. --max-num-seqs 16               (set above; default 256 is far more
+#                                       concurrency than one learner needs, and
+#                                       it inflates activation and graph memory)
+#   5. --enforce-eager                 (add it; skips CUDA graph capture
+#                                       entirely, frees 1-2 GiB, costs perhaps
+#                                       10-20% throughput. A good diagnostic:
+#                                       if this fixes it, graphs were the cause)
+#
+# A 16384 context is not a downgrade for this course, it is a budget you have
+# to respect. Set budget_tokens to about 12000 in the day 8 trimmer, leaving
+# room for the response. Week 2 then teaches context discipline against a real
+# wall instead of a theoretical one, which is the more useful lesson.
+#
+# ---------------------------------------------------------------------------
 # VRAM on a 16 GB card
 #
-# Running the course stack ALONE (recommended): keep 0.90 above. Qwen2.5-7B-AWQ
-# weights are about 5.5 GB, leaving roughly 9 GB of KV cache, which is plenty
-# for a 32k context.
+# Running the course stack ALONE (recommended): 0.80 as set above. Qwen2.5-7B
+# AWQ weights are about 5.5 GB, leaving roughly 6 GB of KV cache, which is far
+# more than a single-user course consumes.
 #
-# Running BOTH stacks at once: 0.90 will fail to allocate. Drop this service to
-# 0.35 and --max-model-len 8192, and drop the voice-rag vllm to 0.35 as well.
+# Running BOTH stacks at once: drop this service to 0.35 and --max-model-len
+# 8192, and drop the voice-rag vllm to 0.35 as well.
 # Both will work, both will be slower, and the course evals will be cramped.
 # Simpler is to stop one stack while working on the other:
 #
@@ -98,6 +134,9 @@ services:
 # ---------------------------------------------------------------------------
 # Model swaps for day 13's capability table: change --model and --quantization,
 # then `docker compose -f docker-compose.course.yml up -d --force-recreate`.
+#
+# Note: the model is now passed as a POSITIONAL argument, not via --model.
+# vLLM deprecated the --model option and will remove it in v0.13.
 #
 #   Weak tier    Qwen/Qwen2.5-3B-Instruct              (no --quantization flag)
 #   Daily tier   Qwen/Qwen2.5-7B-Instruct-AWQ          awq
