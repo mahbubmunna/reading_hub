@@ -223,7 +223,27 @@ If you genuinely need both at once, drop both `--gpu-memory-utilization` values 
 ip addr show | grep "inet "     # note the 192.168.x.x
 ```
 
+You get several lines back and only one of them is the answer:
+
+```
+inet 127.0.0.1/8 scope host lo                      <- loopback, not it
+inet 192.168.1.107/24 ... dynamic noprefixroute enp4s0   <- THIS one
+inet 172.20.0.1/16 ... br-e743a871feb3              <- a Docker bridge, not it
+inet 172.17.0.1/16 ... docker0                      <- Docker's default bridge
+```
+
+The one you want sits on a physical interface (`enp4s0`, `eth0`, `wlan0`) in the
+`192.168.x.x` or `10.x.x.x` range. Every `172.17-31.x.x` address belongs to a
+Docker bridge network — those are the addresses containers use to talk to each
+other on this box, and they mean nothing to your Mac.
+
 Your compose already binds `0.0.0.0`, so the Mac can reach it. Home network only. Never expose port 8000 to the internet, even with the API key.
+
+Note the word `dynamic` in that line: the address came from your router's DHCP
+lease and it can change after a reboot or a lease expiry. When that happens, the
+symptom is every request from the Mac hanging and then timing out, on a day when
+you changed nothing. Give the box a static lease in the router's DHCP settings
+(usually "address reservation", keyed on its MAC address) so `.env` keeps working.
 
 ## Part B: the MacBook (30 minutes)
 
@@ -277,7 +297,7 @@ G
 ```bash
 cat > .env <<'E'
 LLM_PROVIDER=local
-VLLM_HOST=http://192.168.1.106:8000
+VLLM_HOST=http://192.168.1.107:8000
 VLLM_API_KEY=local-dev-key
 ANTHROPIC_API_KEY=sk-ant-...
 CEREBRAS_API_KEY=...
@@ -285,7 +305,7 @@ GROQ_API_KEY=...
 E
 ```
 
-That IP is the one in your voice-rag frontend config. Port 8000 is the course vLLM; 8080 is your voice-rag one.
+Use the address you read in step A6, not this one — the box's lease has moved before. Port 8000 is the course vLLM; 8080 is your voice-rag one.
 
 ### B4. Cap the Anthropic credit
 

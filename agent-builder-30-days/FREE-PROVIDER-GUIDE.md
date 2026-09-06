@@ -98,7 +98,7 @@ Both at once is possible at `--gpu-memory-utilization 0.35` and `--max-model-len
 # on the Linux box
 ip addr show | grep "inet "
 # from the Mac
-curl -H "Authorization: Bearer local-dev-key" http://192.168.1.106:8000/v1/models
+curl -H "Authorization: Bearer local-dev-key" http://192.168.1.107:8000/v1/models
 ```
 
 Home network only. Do not expose port 8000 to the internet.
@@ -106,7 +106,7 @@ Home network only. Do not expose port 8000 to the internet.
 ### The metrics endpoint, which you will use on day 2
 
 ```bash
-curl -s http://192.168.1.106:8000/metrics | grep -E "prefix_cache|num_requests"
+curl -s http://192.168.1.107:8000/metrics | grep -E "prefix_cache|num_requests"
 ```
 
 You get counters including `vllm:prefix_cache_queries_total` and `vllm:prefix_cache_hits_total`. Hit rate is the ratio. This is the number day 2 is about.
@@ -168,7 +168,7 @@ One package, `openai`, talks to every provider above. You are not using OpenAI. 
 
 ```bash
 LLM_PROVIDER=local
-VLLM_HOST=http://192.168.1.106:8000        # your Linux box; omit if running on it
+VLLM_HOST=http://192.168.1.107:8000        # your Linux box; omit if running on it
 VLLM_API_KEY=local-dev-key                # matches vllm serve --api-key
 ANTHROPIC_API_KEY=...                     # the judge, and day 2 part two
 CEREBRAS_API_KEY=...
